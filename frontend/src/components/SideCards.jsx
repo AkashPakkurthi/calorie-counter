@@ -67,7 +67,7 @@ export function ActivityCard({ date, activity }) {
 function Field({ label, value, onChange, hint }) {
   return (
     <label className="block text-xs text-ink-500">
-      {label} <span className="text-ink-700">(min)</span>
+      {label} <span className="text-ink-500">(min)</span>
       <Input
         type="number"
         min="0"
@@ -76,7 +76,7 @@ function Field({ label, value, onChange, hint }) {
         onChange={(e) => onChange(e.target.value)}
         className="mt-1"
       />
-      {hint && <span className="mt-1 block text-[11px] text-ink-700">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-ink-500">{hint}</span>}
     </label>
   );
 }
@@ -108,7 +108,7 @@ export function WaterCard({ date, water, target }) {
             className={`h-7 w-5 rounded-sm border transition ${
               i < glasses
                 ? "border-series-1 bg-series-1"
-                : "border-ink-700 bg-ink-850 hover:border-ink-500"
+                : "border-field bg-ink-850 hover:border-ink-300"
             }`}
           />
         ))}
@@ -215,7 +215,7 @@ export function FavouritesStrip({ date }) {
         {favourites.map((fav) => (
           <span
             key={fav.id}
-            className="group flex items-center gap-1 rounded-full border border-ink-700 bg-ink-850 pr-1 pl-3 text-sm"
+            className="group flex items-center gap-1 rounded-full border border-field bg-ink-850 pr-1 pl-3 text-sm"
           >
             <button
               onClick={() => log.mutate(fav.id)}
@@ -229,7 +229,7 @@ export function FavouritesStrip({ date }) {
             </button>
             <button
               onClick={() => remove.mutate(fav.id)}
-              className="rounded-full px-1.5 text-ink-700 hover:text-over"
+              className="rounded-full px-1.5 text-ink-500 hover:text-over"
               title="Delete favourite"
             >
               ✕

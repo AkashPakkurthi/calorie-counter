@@ -23,7 +23,8 @@ export function Button({
   ...props
 }) {
   const styles = {
-    primary: "bg-series-1 text-white hover:brightness-110",
+    // dark ink on the blue fill: white would only reach 3.6:1
+    primary: "bg-series-1 text-ink-950 hover:brightness-110",
     ghost: "bg-ink-800 text-ink-100 hover:bg-ink-700",
     quiet: "text-ink-300 hover:text-ink-100 hover:bg-ink-800",
     danger: "text-over hover:bg-ink-800",
@@ -31,7 +32,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${styles} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${styles} ${className}`}
       {...props}
     />
   );
@@ -40,7 +41,7 @@ export function Button({
 export function Input({ className = "", ...props }) {
   return (
     <input
-      className={`w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-ink-100 outline-none placeholder:text-ink-500 focus:border-series-1 ${className}`}
+      className={`w-full rounded-lg border border-field bg-ink-850 px-3 py-2 text-sm text-ink-100 outline-none placeholder:text-ink-500 focus:border-series-1 focus:ring-1 focus:ring-series-1 ${className}`}
       {...props}
     />
   );
@@ -49,7 +50,7 @@ export function Input({ className = "", ...props }) {
 export function Select({ className = "", ...props }) {
   return (
     <select
-      className={`rounded-lg border border-ink-700 bg-ink-850 px-2 py-2 text-sm text-ink-100 outline-none focus:border-series-1 ${className}`}
+      className={`rounded-lg border border-field bg-ink-850 px-2 py-2 text-sm text-ink-100 outline-none focus:border-series-1 focus:ring-1 focus:ring-series-1 ${className}`}
       {...props}
     />
   );

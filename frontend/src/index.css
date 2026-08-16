@@ -5,8 +5,14 @@
   --color-ink-900: #121218;
   --color-ink-850: #171720;
   --color-ink-800: #1e1e29;
+  /* Text tokens carry a WCAG AA floor against the card surface (#121218):
+     ink-500 6.1:1 · ink-300 7.7:1 · ink-100 15.8:1.
+     ink-800/700 are borders and dividers ONLY -- never text. */
   --color-ink-700: #2a2a38;
-  --color-ink-500: #6b6b7d;
+  /* Form-control boundaries need 3:1 of their own (WCAG 1.4.11), which the
+     decorative ink-700 divider does not reach. */
+  --color-field: #6b6b7d;
+  --color-ink-500: #9191a6;
   --color-ink-300: #a5a5b8;
   --color-ink-100: #ececf2;
 
