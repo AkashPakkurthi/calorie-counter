@@ -51,7 +51,7 @@ class MealEntry(Base):
     date = Column(String, index=True, nullable=False)  # YYYY-MM-DD, local tz
     meal_type = Column(String, index=True, nullable=False)
     raw_text = Column(Text, default="")
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     items = relationship(
         "FoodItem", back_populates="meal", cascade="all, delete-orphan", lazy="selectin"
@@ -100,8 +100,8 @@ class FoodCache(Base):
     sugar_g = Column(Float, default=0.0)
     sodium_mg = Column(Float, default=0.0)
     hit_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    last_used_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    last_used_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class Favourite(Base):
@@ -111,7 +111,7 @@ class Favourite(Base):
     label = Column(String, nullable=False)
     meal_type = Column(String, default="snacks")
     items_json = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class ActivityLog(Base):

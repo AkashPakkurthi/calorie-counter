@@ -11,6 +11,8 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
+# Default suits a host with a mounted volume (Railway). Hosts without a disk
+# (Render free) override DATABASE_URL with a Postgres URL instead.
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     DATABASE_URL=sqlite:////data/calories.db

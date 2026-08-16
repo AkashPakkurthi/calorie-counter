@@ -42,6 +42,32 @@ the built bundle itself, so there is one origin and no CORS.
 
 Tests: `.venv/bin/python -m pytest`
 
+## Deploying free (Render + Neon)
+
+Render's free web service has no disk, so the database lives in Neon's free
+Postgres instead. Both are permanently free and neither needs a card.
+
+1. **Neon** — [neon.tech](https://neon.tech) → new project → copy the connection
+   string (`postgresql://...?sslmode=require`). 0.5 GB is thousands of meals.
+2. **Render** — [render.com](https://render.com) → **New → Web Service** → connect
+   the GitHub repo → runtime **Docker** → plan **Free**.
+3. Environment variables:
+
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | the Neon connection string |
+   | `OPENAI_API_KEY` | your Groq (or OpenAI) key |
+   | `OPENAI_BASE_URL` | `https://api.groq.com/openai/v1` for Groq |
+   | `OPENAI_MODEL` | `llama-3.3-70b-versatile` for Groq |
+   | `APP_TZ` | `Asia/Kolkata` |
+
+4. Deploy. Tables are created on first boot; new columns are added
+   automatically on later deploys.
+
+The one catch: a free Render service **sleeps after ~15 minutes idle**, so the
+first request after a gap takes up to a minute to wake. Every request after
+that is fast. Your data is unaffected — it lives in Neon, not the container.
+
 ## Deploying to Railway
 
 1. Push this directory to a GitHub repo.
@@ -75,7 +101,7 @@ spend your OpenAI credits. Don't share it.
 backend/app/
   main.py        FastAPI app, static SPA mount, health
   config.py      pydantic-settings (OPENAI_API_KEY, DATABASE_URL, APP_TZ)
-  db.py          async SQLAlchemy engine + get_db dependency
+  db.py          async engine (SQLite or Postgres) + get_db + column check
   models.py      tables
   schemas.py     request/response models
   nutrition.py   GPT parse + enrich passes and the food cache

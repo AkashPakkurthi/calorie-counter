@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: calorie-counter
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_TZ
+        value: Asia/Kolkata
+      # Set these in the Render dashboard (they are secrets):
+      #   DATABASE_URL     -> your Neon connection string
+      #   OPENAI_API_KEY   -> your Groq key
+      #   OPENAI_BASE_URL  -> https://api.groq.com/openai/v1
+      #   OPENAI_MODEL     -> llama-3.3-70b-versatile

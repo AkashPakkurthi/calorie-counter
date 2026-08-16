@@ -318,3 +318,33 @@ def test_cut_protein_is_high_and_macros_reconstruct_calories():
     assert r["protein_g"] == 172  # 2 g/kg to protect muscle
     derived = 4 * r["protein_g"] + 4 * r["carbs_g"] + 9 * r["fat_g"]
     assert abs(derived - r["daily_calories"]) < 30
+
+
+# --- database URL handling (SQLite locally, Postgres when hosted) ----------
+
+from backend.app.db import build_engine_args  # noqa: E402
+
+
+def test_sqlite_url_gets_the_async_driver():
+    url, kw = build_engine_args("sqlite:///./calories.db")
+    assert url == "sqlite+aiosqlite:///./calories.db"
+    assert "connect_args" not in kw  # no Postgres pooling knobs
+
+
+def test_neon_url_is_made_asyncpg_safe():
+    url, kw = build_engine_args(
+        "postgres://u:p@ep-x.neon.tech/neondb?sslmode=require&channel_binding=require"
+    )
+    # asyncpg needs its own driver name and rejects the libpq-only params
+    assert url == "postgresql+asyncpg://u:p@ep-x.neon.tech/neondb"
+    assert kw["connect_args"]["ssl"] == "require"
+    # Neon's pooler cannot handle asyncpg's prepared statements
+    assert kw["connect_args"]["statement_cache_size"] == 0
+    assert kw["pool_pre_ping"] is True
+
+
+def test_plaintext_postgres_still_connects():
+    # A provider on a private network may not offer TLS at all; "prefer" uses
+    # it when available instead of refusing to connect.
+    _, kw = build_engine_args("postgresql://postgres:pw@10.0.0.5:5432/calories")
+    assert kw["connect_args"]["ssl"] == "prefer"
