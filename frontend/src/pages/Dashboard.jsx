@@ -40,8 +40,11 @@ export default function Dashboard() {
     <div className="space-y-4">
       {health && !health.openai_configured && (
         <ErrorNote>
-          OPENAI_API_KEY isn’t set, so “Type it” won’t work. Add it to .env and
-          restart the server. Picking known foods still works.
+          No API key configured, so “Type it” won’t work — picking known foods
+          still does. Set <code>OPENAI_API_KEY</code> (plus{" "}
+          <code>OPENAI_BASE_URL</code> and <code>OPENAI_MODEL</code> if you use
+          Groq or another provider) in your hosting platform’s variables, or in{" "}
+          <code>.env</code> when running locally, then restart.
         </ErrorNote>
       )}
 

@@ -49,8 +49,19 @@ Tests: `.venv/bin/python -m pytest`
    at the Dockerfile, so no build config is needed.
 3. Add a **Volume** mounted at `/data`. This is what makes your data survive
    deploys — the SQLite file lives at `/data/calories.db`.
-4. Set variables: `OPENAI_API_KEY`, and optionally `OPENAI_MODEL`
-   (default `gpt-4o-mini`) and `APP_TZ` (default `Asia/Kolkata`).
+4. Set variables. For OpenAI, `OPENAI_API_KEY` alone is enough. For Groq (or
+   any OpenAI-compatible provider) all three are needed:
+
+   | Variable | Groq example |
+   |---|---|
+   | `OPENAI_API_KEY` | `gsk_...` |
+   | `OPENAI_BASE_URL` | `https://api.groq.com/openai/v1` |
+   | `OPENAI_MODEL` | `llama-3.3-70b-versatile` |
+   | `APP_TZ` | `Asia/Kolkata` (optional, this is the default) |
+
+   Models that lack strict `json_schema` support (most Groq Llama models) are
+   handled automatically — the app falls back to JSON mode. `/api/health`
+   reports which provider and model it ended up using.
 5. Generate a domain. `PORT` is injected by Railway and honored automatically.
 
 `/api/health` is the healthcheck and reports whether the API key was picked up.

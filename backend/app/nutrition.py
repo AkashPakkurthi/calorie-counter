@@ -40,7 +40,8 @@ def get_client() -> AsyncOpenAI:
     if _client is None:
         if not settings.openai_api_key:
             raise NutritionError(
-                "OPENAI_API_KEY is not set. Add it to .env and restart the server."
+                "No API key configured. Set OPENAI_API_KEY in your environment "
+                "(or .env when running locally) and restart."
             )
         kwargs = {"api_key": settings.openai_api_key}
         if settings.openai_base_url:
