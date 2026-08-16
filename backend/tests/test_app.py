@@ -268,7 +268,7 @@ def test_no_goal_means_maintenance():
 def test_maintenance_excludes_logged_exercise():
     # BMR 1848 x 1.2 sedentary -- NOT x1.375, which would double-count the
     # walking and table tennis that are logged as burn.
-    assert plan_for(None, None).maintenance == 2218
+    assert plan_for(None, None).maintenance == 2217
 
 
 def test_reasonable_goal_produces_a_deficit():

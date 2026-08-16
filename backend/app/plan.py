@@ -16,7 +16,7 @@ from .exercise import SEDENTARY_MULTIPLIER, bmr_tdee
 from .utils import days_between, parse_date, today_str
 
 KCAL_PER_KG = 7700  # energy in a kilo of body fat, the standard planning figure
-SEDENTARY = SEDENTARY_MULTIPLIER  # desk job; logged exercise added separately
+SEDENTARY = SEDENTARY_MULTIPLIER  # kept for reference; bmr_tdee applies it
 MAX_SAFE_KG_PER_WEEK = 1.0
 ABSOLUTE_FLOOR_KCAL = 1500  # below this, an adult male tends to lose muscle
 # Sitting a little under BMR is normal in a cut; sitting far under it is not.
@@ -67,8 +67,9 @@ def build_plan(
     start_weight: float | None = None,
     today: str | None = None,
 ) -> Plan:
-    bmr, _ = bmr_tdee(current_weight, height_cm, age, sex)
-    maintenance = round(bmr * SEDENTARY)
+    # Take maintenance straight from bmr_tdee rather than re-deriving it, so
+    # Settings and this card can never disagree by a rounding step.
+    bmr, maintenance = bmr_tdee(current_weight, height_cm, age, sex)
     plan = Plan(current_weight=current_weight, maintenance=maintenance)
 
     if not target_weight or not target_date:
