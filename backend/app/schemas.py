@@ -16,16 +16,25 @@ class Nutrition(BaseModel):
     sugar_g: float = 0
     sodium_mg: float = 0
 
-    def scaled(self, factor: float) -> "Nutrition":
+    def scaled(self, factor: float, ndigits: int = 1) -> "Nutrition":
+        """`ndigits` defaults to display precision; pass more when going down to
+        a per-unit basis, where per-gram values would otherwise round to zero."""
         return Nutrition(
-            calories=round(self.calories * factor, 1),
-            protein_g=round(self.protein_g * factor, 1),
-            carbs_g=round(self.carbs_g * factor, 1),
-            fat_g=round(self.fat_g * factor, 1),
-            fiber_g=round(self.fiber_g * factor, 1),
-            sugar_g=round(self.sugar_g * factor, 1),
-            sodium_mg=round(self.sodium_mg * factor, 1),
+            **{
+                field: round(getattr(self, field) * factor, ndigits)
+                for field in Nutrition.model_fields
+            }
         )
+
+    def implausible(self) -> str | None:
+        """Atwater cross-check: 4/4/9 kcal per gram should roughly reconstruct
+        the calorie figure. Catches a model that mixed up its basis."""
+        if self.calories <= 0:
+            return None
+        derived = 4 * self.protein_g + 4 * self.carbs_g + 9 * self.fat_g
+        if derived > self.calories * 1.6 or derived < self.calories * 0.5:
+            return f"macros imply ~{derived:.0f} kcal but calories say {self.calories:.0f}"
+        return None
 
 
 class ResolvedItem(Nutrition):

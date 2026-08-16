@@ -124,32 +124,96 @@ Rules:
   "Paneer Butter Masala" -> "paneer butter masala").
 - `name`: a clean human label, title-ish case."""
 
+# Per-gram / per-ml figures are so small that models fumble them (0.03 g of
+# protein per ml, etc). Ask for the familiar per-100 basis and divide it down.
+BASIS = {"g": 100, "ml": 100}
+
 ENRICH_PROMPT = f"""You are a nutrition database for Indian and common Western foods.
 
-For EACH food given, return nutrition for exactly ONE unit of the stated unit
-(one piece, one gram, one bowl, ...), NOT for the whole portion.
+For EACH food given, return nutrition on this basis:
+- unit "g"  -> values per 100 GRAMS
+- unit "ml" -> values per 100 MILLILITRES
+- every other unit -> values for exactly ONE of that unit (one piece, one bowl,
+  one cup, one slice, one serving) -- NOT for the whole portion.
+
 Assume typical home-cooked preparation for {PROFILE}.
 A "bowl" is ~200 g, a "cup" ~240 ml, a "serving" is one normal portion.
+Keep the numbers internally consistent: protein and carbs are ~4 kcal/g and fat
+~9 kcal/g, so they must roughly add up to the calories you give.
 Return your best numeric estimate for every field -- never null, never zero unless
 genuinely zero. Echo `normalized_name` and `unit` back exactly as given."""
 
 
-async def _chat_json(system: str, user: str, schema: dict) -> dict:
+"""Not every OpenAI-compatible provider supports strict `json_schema`
+(Groq only offers it on some models, Ollama on none). We try it first, and on
+a rejection fall back to plain JSON mode with the schema written into the
+prompt -- then cache the answer so we stop paying for the failed attempt."""
+_json_schema_supported: bool | None = None
+
+
+def _unsupported_schema_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "response_format" in msg or "json_schema" in msg
+
+
+def _extract_json(text: str) -> dict:
+    """JSON mode is not strict, so tolerate prose or a ```json fence."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1].removeprefix("json").strip()
     try:
-        response = await get_client().chat.completions.create(
-            model=settings.openai_model,
-            temperature=0,
-            response_format={"type": "json_schema", "json_schema": schema},
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(text[start : end + 1])
+
+
+async def _call(system: str, user: str, schema: dict, strict: bool) -> str:
+    response_format = (
+        {"type": "json_schema", "json_schema": schema} if strict else {"type": "json_object"}
+    )
+    if not strict:
+        # The model no longer gets the schema for free -- spell it out.
+        system = (
+            f"{system}\n\nReply with JSON only -- no prose, no markdown fence -- "
+            f"matching exactly this JSON Schema:\n{json.dumps(schema['schema'])}"
         )
-        return json.loads(response.choices[0].message.content)
+    response = await get_client().chat.completions.create(
+        model=settings.openai_model,
+        temperature=0,
+        response_format=response_format,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    return response.choices[0].message.content
+
+
+async def _chat_json(system: str, user: str, schema: dict) -> dict:
+    global _json_schema_supported
+    try:
+        if _json_schema_supported is not False:
+            try:
+                content = await _call(system, user, schema, strict=True)
+                _json_schema_supported = True
+                return _extract_json(content)
+            except Exception as exc:  # noqa: BLE001
+                if not _unsupported_schema_error(exc):
+                    raise
+                logger.info(
+                    "%s does not support json_schema; using JSON mode instead",
+                    settings.openai_model,
+                )
+                _json_schema_supported = False
+
+        return _extract_json(await _call(system, user, schema, strict=False))
     except NutritionError:
         raise
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI as a clean error
-        logger.warning("OpenAI call failed: %s", exc)
+        logger.warning("Nutrition model call failed: %s", exc)
         raise NutritionError(f"Could not reach the nutrition model: {exc}") from exc
 
 
@@ -228,10 +292,24 @@ async def enrich_missing(items: list[dict]) -> dict[tuple[str, str], Nutrition]:
         [{"normalized_name": i["normalized_name"], "unit": i["unit"]} for i in items]
     )
     data = await _chat_json(ENRICH_PROMPT, f"Foods: {payload}", ENRICH_SCHEMA)
+
     out: dict[tuple[str, str], Nutrition] = {}
+    by_name: dict[str, Nutrition] = {}
     for food in data.get("foods", []):
-        key = (normalize(food.get("normalized_name", "")), food.get("unit", "serving"))
-        out[key] = Nutrition(**{k: float(food.get(k) or 0) for k in NUTRITION_PROPS})
+        name = normalize(food.get("normalized_name", ""))
+        unit = food.get("unit", "serving")
+        values = Nutrition(**{k: float(food.get(k) or 0) for k in NUTRITION_PROPS})
+        values = values.scaled(1 / BASIS.get(unit, 1), 4)  # per-100 -> per-unit
+        out[(name, unit)] = values
+        by_name[name] = values
+
+    # In JSON mode the unit enum isn't enforced, so a model may echo back
+    # "pieces" or "grams". Fall back to matching on the food name alone rather
+    # than silently returning a zero-calorie item.
+    for item in items:
+        key = (item["normalized_name"], item["unit"])
+        if key not in out and item["normalized_name"] in by_name:
+            out[key] = by_name[item["normalized_name"]]
     return out
 
 
@@ -283,7 +361,7 @@ async def resolve_meal(db: AsyncSession, text: str, meal_type: str) -> list[Reso
 def per_unit_from_absolute(item: ResolvedItem) -> Nutrition:
     """Invert the multiplication so an edited item teaches the cache."""
     qty = item.quantity or 1
-    return Nutrition(**item.model_dump(include=set(Nutrition.model_fields))).scaled(1 / qty)
+    return Nutrition(**item.model_dump(include=set(Nutrition.model_fields))).scaled(1 / qty, 4)
 
 
 def unit_is_valid(unit: str) -> bool:

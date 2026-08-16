@@ -19,6 +19,7 @@ export default function MealCard({ meal, date, meals = [] }) {
   const [mode, setMode] = useState("type");
   const [text, setText] = useState("");
   const [draft, setDraft] = useState(null);
+  const [warning, setWarning] = useState(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["day"] });
@@ -28,7 +29,10 @@ export default function MealCard({ meal, date, meals = [] }) {
 
   const analyze = useMutation({
     mutationFn: () => api.analyze(text, meal.key),
-    onSuccess: (data) => setDraft(data.items),
+    onSuccess: (data) => {
+      setDraft(data.items);
+      setWarning(data.warning);
+    },
   });
 
   const save = useMutation({
@@ -144,6 +148,7 @@ export default function MealCard({ meal, date, meals = [] }) {
         open={!!draft}
         items={draft || []}
         mealLabel={meal.label}
+        warning={warning}
         onCancel={() => setDraft(null)}
         onSave={(items) => save.mutate(items)}
         saving={save.isPending}
@@ -262,7 +267,7 @@ function PickPanel({ date, mealType, onDone }) {
 
 /** Nothing is saved until you approve it here -- and every field is editable,
  *  so a correction also teaches the food cache. */
-function ConfirmModal({ open, items, mealLabel, onCancel, onSave, saving }) {
+function ConfirmModal({ open, items, mealLabel, warning, onCancel, onSave, saving }) {
   const [rows, setRows] = useState(items);
 
   // Re-seed when a fresh analysis arrives.
@@ -301,6 +306,12 @@ function ConfirmModal({ open, items, mealLabel, onCancel, onSave, saving }) {
         Estimated portions — change anything that looks off. Your edits are
         remembered for next time.
       </p>
+
+      {warning && (
+        <p className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          ⚠ {warning}
+        </p>
+      )}
 
       <div className="space-y-3">
         {rows.map((row, idx) => (

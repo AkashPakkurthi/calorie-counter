@@ -29,7 +29,13 @@ async def analyze(payload: AnalyzeRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not items:
         raise HTTPException(status_code=422, detail="Could not identify any food in that text.")
-    return AnalyzeResponse(items=items)
+
+    # Don't hide a dubious estimate -- flag it so it gets checked before saving.
+    suspect = [f"{i.name} ({note})" for i in items if (note := i.implausible())]
+    warning = (
+        "These look off, please double-check: " + "; ".join(suspect) if suspect else None
+    )
+    return AnalyzeResponse(items=items, warning=warning)
 
 
 @router.post("", response_model=MealOut)

@@ -165,3 +165,82 @@ async def test_empty_day_is_zeroed_not_an_error(db):
 
 def test_today_is_local_and_well_formed():
     assert len(today_str()) == 10 and today_str().count("-") == 2
+
+
+# --- provider quirks: JSON mode, per-100 basis, sanity check ---------------
+
+from backend.app import nutrition  # noqa: E402
+
+
+def test_extract_json_survives_fences_and_prose():
+    assert nutrition._extract_json('{"a": 1}') == {"a": 1}
+    assert nutrition._extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert nutrition._extract_json('Sure!\n{"a": 1}\nHope that helps.') == {"a": 1}
+
+
+def test_detects_provider_rejecting_json_schema():
+    groq = Exception(
+        "Error code: 400 - This model does not support response format `json_schema`."
+    )
+    assert nutrition._unsupported_schema_error(groq)
+    assert not nutrition._unsupported_schema_error(Exception("rate limit exceeded"))
+
+
+async def test_gram_and_ml_foods_are_converted_from_a_per_100_basis(monkeypatch):
+    async def fake_chat(system, user, schema):
+        return {
+            "foods": [
+                # per 100 ml, the basis the prompt asks for
+                {"normalized_name": "buttermilk", "unit": "ml", "calories": 40,
+                 "protein_g": 3.5, "carbs_g": 6.5, "fat_g": 1.0, "fiber_g": 0,
+                 "sugar_g": 5, "sodium_mg": 100},
+                # per one piece -- must NOT be divided
+                {"normalized_name": "roti", "unit": "piece", "calories": 104,
+                 "protein_g": 3.1, "carbs_g": 18, "fat_g": 2.4, "fiber_g": 1.6,
+                 "sugar_g": 0.4, "sodium_mg": 190},
+            ]
+        }
+
+    monkeypatch.setattr(nutrition, "_chat_json", fake_chat)
+    out = await nutrition.enrich_missing(
+        [
+            {"normalized_name": "buttermilk", "unit": "ml", "name": "Buttermilk"},
+            {"normalized_name": "roti", "unit": "piece", "name": "Roti"},
+        ]
+    )
+
+    per_ml = out[("buttermilk", "ml")]
+    assert per_ml.calories == 0.4  # not rounded away to 0.0
+    # A 250 ml glass lands in a sane place, not the 75 g of protein we saw raw.
+    assert per_ml.scaled(250).protein_g == 8.8
+    assert out[("roti", "piece")].calories == 104  # per-piece untouched
+
+
+async def test_unit_mismatch_falls_back_to_name(monkeypatch):
+    async def fake_chat(system, user, schema):
+        return {
+            "foods": [
+                {"normalized_name": "curd", "unit": "bowl", "calories": 120,
+                 "protein_g": 8, "carbs_g": 9, "fat_g": 5, "fiber_g": 0,
+                 "sugar_g": 9, "sodium_mg": 60}
+            ]
+        }
+
+    monkeypatch.setattr(nutrition, "_chat_json", fake_chat)
+    # asked for a cup, model answered with a bowl -- better to use it than to
+    # save a zero-calorie food
+    out = await nutrition.enrich_missing(
+        [{"normalized_name": "curd", "unit": "cup", "name": "Curd"}]
+    )
+    assert out[("curd", "cup")].calories == 120
+
+
+def test_implausible_macros_are_flagged():
+    # the real bug: 100 kcal but 75 g of protein
+    assert Nutrition(calories=100, protein_g=75).implausible() is not None
+    # a normal roti passes
+    assert Nutrition(
+        calories=104, protein_g=3.1, carbs_g=18, fat_g=2.4
+    ).implausible() is None
+    # no calories logged -> nothing to cross-check
+    assert Nutrition().implausible() is None

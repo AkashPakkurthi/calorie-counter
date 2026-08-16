@@ -50,6 +50,8 @@ async def health():
         "status": "ok",
         "today": today_str(),
         "openai_configured": bool(settings.openai_api_key),
+        "model": settings.openai_model,
+        "provider": settings.openai_base_url or "https://api.openai.com/v1",
     }
 
 
