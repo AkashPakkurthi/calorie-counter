@@ -1,0 +1,301 @@
+"""Free text -> resolved foods with full macros.
+
+Two GPT passes, both cheap, and a SQLite-backed per-unit cache in between:
+
+  1. parse   -- always runs; splits the text into {name, quantity, unit}
+  2. lookup  -- anything already in `food_cache` is resolved for free
+  3. enrich  -- one batched call for the leftovers, storing PER-ONE-UNIT
+                nutrition so the next time that food is free too
+"""
+
+import json
+import logging
+from datetime import UTC, datetime
+
+from openai import AsyncOpenAI
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .config import get_settings
+from .models import FoodCache
+from .schemas import Nutrition, ResolvedItem, Unit
+from .utils import normalize
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+_client: AsyncOpenAI | None = None
+
+UNITS = ["piece", "g", "ml", "bowl", "cup", "tbsp", "slice", "serving"]
+
+PROFILE = "a 26 year old Indian male, 178cm, ~86kg, moderately active"
+
+
+class NutritionError(RuntimeError):
+    """Raised when GPT cannot be reached -- surfaced to the UI, never saved."""
+
+
+def get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        if not settings.openai_api_key:
+            raise NutritionError(
+                "OPENAI_API_KEY is not set. Add it to .env and restart the server."
+            )
+        kwargs = {"api_key": settings.openai_api_key}
+        if settings.openai_base_url:
+            kwargs["base_url"] = settings.openai_base_url
+        _client = AsyncOpenAI(**kwargs)
+    return _client
+
+
+PARSE_SCHEMA = {
+    "name": "parsed_meal",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["items"],
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["name", "normalized_name", "quantity", "unit"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "normalized_name": {"type": "string"},
+                        "quantity": {"type": "number"},
+                        "unit": {"type": "string", "enum": UNITS},
+                    },
+                },
+            }
+        },
+    },
+}
+
+NUTRITION_PROPS = {
+    "calories": {"type": "number"},
+    "protein_g": {"type": "number"},
+    "carbs_g": {"type": "number"},
+    "fat_g": {"type": "number"},
+    "fiber_g": {"type": "number"},
+    "sugar_g": {"type": "number"},
+    "sodium_mg": {"type": "number"},
+}
+
+ENRICH_SCHEMA = {
+    "name": "food_nutrition",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["foods"],
+        "properties": {
+            "foods": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["normalized_name", "unit", *NUTRITION_PROPS],
+                    "properties": {
+                        "normalized_name": {"type": "string"},
+                        "unit": {"type": "string", "enum": UNITS},
+                        **NUTRITION_PROPS,
+                    },
+                },
+            }
+        },
+    },
+}
+
+PARSE_PROMPT = f"""You split a meal description into individual foods for {PROFILE}.
+
+Rules:
+- One entry per distinct food. Split combined dishes only when they are clearly separate items.
+- `quantity` + `unit`: if the user gave a weight or count, use it exactly.
+  If they did NOT, YOU decide a realistic portion for {PROFILE} eating a normal
+  home meal (e.g. "dal" -> 1 bowl, "rice" -> 200 g, "curd" -> 1 cup).
+  Never return 0 and never ask for clarification.
+- Prefer natural units: countable foods -> "piece"/"slice", curries/dals -> "bowl",
+  liquids -> "ml", loose solids -> "g".
+- `normalized_name`: lowercase, singular, no quantity words ("3 rotis" -> "roti",
+  "Paneer Butter Masala" -> "paneer butter masala").
+- `name`: a clean human label, title-ish case."""
+
+ENRICH_PROMPT = f"""You are a nutrition database for Indian and common Western foods.
+
+For EACH food given, return nutrition for exactly ONE unit of the stated unit
+(one piece, one gram, one bowl, ...), NOT for the whole portion.
+Assume typical home-cooked preparation for {PROFILE}.
+A "bowl" is ~200 g, a "cup" ~240 ml, a "serving" is one normal portion.
+Return your best numeric estimate for every field -- never null, never zero unless
+genuinely zero. Echo `normalized_name` and `unit` back exactly as given."""
+
+
+async def _chat_json(system: str, user: str, schema: dict) -> dict:
+    try:
+        response = await get_client().chat.completions.create(
+            model=settings.openai_model,
+            temperature=0,
+            response_format={"type": "json_schema", "json_schema": schema},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return json.loads(response.choices[0].message.content)
+    except NutritionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - surfaced to the UI as a clean error
+        logger.warning("OpenAI call failed: %s", exc)
+        raise NutritionError(f"Could not reach the nutrition model: {exc}") from exc
+
+
+async def parse_text(text: str, meal_type: str) -> list[dict]:
+    data = await _chat_json(
+        PARSE_PROMPT, f"Meal: {meal_type}\nWhat I ate: {text}", PARSE_SCHEMA
+    )
+    items = []
+    for raw in data.get("items", []):
+        qty = float(raw.get("quantity") or 0)
+        items.append(
+            {
+                "name": (raw.get("name") or "").strip() or "Food",
+                "normalized_name": normalize(raw.get("normalized_name") or raw.get("name", "")),
+                "quantity": qty if qty > 0 else 1.0,
+                "unit": raw.get("unit") if raw.get("unit") in UNITS else "serving",
+            }
+        )
+    return [i for i in items if i["normalized_name"]]
+
+
+async def lookup_cache(
+    db: AsyncSession, normalized_name: str, unit: str
+) -> FoodCache | None:
+    result = await db.execute(
+        select(FoodCache).where(
+            FoodCache.normalized_name == normalized_name, FoodCache.unit == unit
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_cache(
+    db: AsyncSession,
+    normalized_name: str,
+    display_name: str,
+    unit: str,
+    per_unit: Nutrition,
+    bump: bool = False,
+) -> FoodCache:
+    row = await lookup_cache(db, normalized_name, unit)
+    if row is None:
+        row = FoodCache(
+            normalized_name=normalized_name,
+            display_name=display_name,
+            unit=unit,
+            hit_count=0,
+        )
+        db.add(row)
+    for field, value in per_unit.model_dump().items():
+        setattr(row, field, value)
+    row.display_name = display_name or row.display_name
+    row.last_used_at = datetime.now(UTC)
+    if bump:
+        row.hit_count = (row.hit_count or 0) + 1
+    await db.flush()
+    return row
+
+
+def _to_nutrition(obj) -> Nutrition:
+    return Nutrition(
+        calories=obj.calories or 0,
+        protein_g=obj.protein_g or 0,
+        carbs_g=obj.carbs_g or 0,
+        fat_g=obj.fat_g or 0,
+        fiber_g=obj.fiber_g or 0,
+        sugar_g=obj.sugar_g or 0,
+        sodium_mg=obj.sodium_mg or 0,
+    )
+
+
+async def enrich_missing(items: list[dict]) -> dict[tuple[str, str], Nutrition]:
+    if not items:
+        return {}
+    payload = json.dumps(
+        [{"normalized_name": i["normalized_name"], "unit": i["unit"]} for i in items]
+    )
+    data = await _chat_json(ENRICH_PROMPT, f"Foods: {payload}", ENRICH_SCHEMA)
+    out: dict[tuple[str, str], Nutrition] = {}
+    for food in data.get("foods", []):
+        key = (normalize(food.get("normalized_name", "")), food.get("unit", "serving"))
+        out[key] = Nutrition(**{k: float(food.get(k) or 0) for k in NUTRITION_PROPS})
+    return out
+
+
+async def resolve_meal(db: AsyncSession, text: str, meal_type: str) -> list[ResolvedItem]:
+    """Full pipeline. Returns absolute (quantity-multiplied) nutrition.
+
+    Nothing is written to meal history here -- only the food cache is warmed.
+    """
+    parsed = await parse_text(text, meal_type)
+
+    cached: dict[tuple[str, str], Nutrition] = {}
+    missing: list[dict] = []
+    for item in parsed:
+        key = (item["normalized_name"], item["unit"])
+        if key in cached:
+            continue
+        row = await lookup_cache(db, *key)
+        if row is not None:
+            cached[key] = _to_nutrition(row)
+        elif key not in {(m["normalized_name"], m["unit"]) for m in missing}:
+            missing.append(item)
+
+    enriched = await enrich_missing(missing)
+    for item in missing:
+        key = (item["normalized_name"], item["unit"])
+        per_unit = enriched.get(key, Nutrition())
+        await upsert_cache(db, key[0], item["name"], key[1], per_unit)
+    await db.commit()
+
+    resolved: list[ResolvedItem] = []
+    for item in parsed:
+        key = (item["normalized_name"], item["unit"])
+        from_cache = key in cached
+        per_unit = cached.get(key) or enriched.get(key, Nutrition())
+        totals = per_unit.scaled(item["quantity"])
+        resolved.append(
+            ResolvedItem(
+                name=item["name"],
+                normalized_name=key[0],
+                quantity=item["quantity"],
+                unit=key[1],  # type: ignore[arg-type]
+                from_cache=from_cache,
+                **totals.model_dump(),
+            )
+        )
+    return resolved
+
+
+def per_unit_from_absolute(item: ResolvedItem) -> Nutrition:
+    """Invert the multiplication so an edited item teaches the cache."""
+    qty = item.quantity or 1
+    return Nutrition(**item.model_dump(include=set(Nutrition.model_fields))).scaled(1 / qty)
+
+
+def unit_is_valid(unit: str) -> bool:
+    return unit in UNITS
+
+
+__all__ = [
+    "NutritionError",
+    "Unit",
+    "resolve_meal",
+    "upsert_cache",
+    "lookup_cache",
+    "per_unit_from_absolute",
+    "unit_is_valid",
+]

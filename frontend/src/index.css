@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #0b0b0f;
+  --color-ink-900: #121218;
+  --color-ink-850: #171720;
+  --color-ink-800: #1e1e29;
+  --color-ink-700: #2a2a38;
+  --color-ink-500: #6b6b7d;
+  --color-ink-300: #a5a5b8;
+  --color-ink-100: #ececf2;
+
+  /* Data-viz slots, dark-surface steps (validated categorical order) */
+  --color-series-1: #3987e5; /* blue    - calories */
+  --color-series-2: #d95926; /* orange  - carbs    */
+  --color-series-3: #199e70; /* aqua    - protein  */
+  --color-series-4: #c98500; /* yellow  - fat      */
+  --color-series-5: #d55181; /* magenta - fiber    */
+  --color-good: #199e70;
+  --color-warn: #c98500;
+  --color-over: #e66767;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--color-ink-950);
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--color-ink-100);
+  background: var(--color-ink-950);
+}
+
+/* Keep numbers from jittering as they tick up */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 999px;
+}

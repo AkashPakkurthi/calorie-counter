@@ -1,0 +1,88 @@
+# Calorie Tracker
+
+A single-user calorie and macro tracker. Type what you ate in plain language —
+"3 rotis and a bowl of dal" — and GPT works out the portions and the full
+nutrition breakdown. Everything it learns is cached, so foods you eat regularly
+are logged instantly and for free.
+
+Built for one profile: 26M, 178 cm, 86 kg. No login, no multi-user support.
+
+## What it does
+
+- **Two ways to log food.** *Type it* → GPT parses and estimates → you confirm
+  and can correct anything before it saves. *Pick known food* → choose from
+  everything the tracker already knows, set a quantity, done — no AI call.
+- **Full nutrition.** Calories, protein, carbs, fat, fiber, sugar, sodium, each
+  against a target you set yourself.
+- **It learns.** Every saved food is stored *per one unit* in `food_cache`. Log
+  3 rotis once and it knows what one roti is forever. Corrections stick — fixing
+  a value on the Foods page fixes every future meal.
+- **Exercise without AI.** Walking and table-tennis minutes, priced by the MET
+  formula `kcal = MET × weight × hours` (walking 3.5, TT 4.0).
+- **Weight handled honestly.** Log a weigh-in weekly; each day's burn uses the
+  weight in effect *on that day*, so a new weigh-in never rewrites old numbers.
+- **History.** 7/30/90-day calorie and protein trends, weight trend, weekday
+  averages, and any past day in full detail.
+- Favourites for one-tap re-adds, and water tracking.
+
+## Running locally
+
+```bash
+cp .env.example .env          # then paste your OPENAI_API_KEY into it
+
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python -m uvicorn backend.app.main:app --reload --port 8000
+
+cd frontend && npm install && npm run dev    # http://localhost:5173
+```
+
+The Vite dev server proxies `/api` to port 8000. In production FastAPI serves
+the built bundle itself, so there is one origin and no CORS.
+
+Tests: `.venv/bin/python -m pytest`
+
+## Deploying to Railway
+
+1. Push this directory to a GitHub repo.
+2. In Railway: **New Project → Deploy from GitHub repo**. `railway.toml` points
+   at the Dockerfile, so no build config is needed.
+3. Add a **Volume** mounted at `/data`. This is what makes your data survive
+   deploys — the SQLite file lives at `/data/calories.db`.
+4. Set variables: `OPENAI_API_KEY`, and optionally `OPENAI_MODEL`
+   (default `gpt-4o-mini`) and `APP_TZ` (default `Asia/Kolkata`).
+5. Generate a domain. `PORT` is injected by Railway and honored automatically.
+
+`/api/health` is the healthcheck and reports whether the API key was picked up.
+
+The deployed URL is unlisted but public — anyone with the link can log food and
+spend your OpenAI credits. Don't share it.
+
+## Layout
+
+```
+backend/app/
+  main.py        FastAPI app, static SPA mount, health
+  config.py      pydantic-settings (OPENAI_API_KEY, DATABASE_URL, APP_TZ)
+  db.py          async SQLAlchemy engine + get_db dependency
+  models.py      tables
+  schemas.py     request/response models
+  nutrition.py   GPT parse + enrich passes and the food cache
+  exercise.py    MET math and weight_for_date
+  services.py    shared day-building / meal-saving helpers
+  routers/       meals, days, settings, activity, foods, favourites
+frontend/src/
+  pages/         Dashboard, History, Settings, Foods
+  components/    MealCard (type + pick modes), Rings, SideCards, ui primitives
+```
+
+Conventions follow the sibling `ai-search-engine` project: pydantic-settings
+with a cached `get_settings()`, async SQLAlchemy + aiosqlite, `lifespan` +
+`create_all`, and a lazily constructed OpenAI client. Unlike that project this
+one uses `AsyncOpenAI` (so the event loop isn't blocked), Structured Outputs for
+typed nutrition, and split `APIRouter` modules.
+
+## Cost
+
+Two small `gpt-4o-mini` calls per *new* food, one per repeat meal, zero for
+picks and favourites. Realistically cents per month.
