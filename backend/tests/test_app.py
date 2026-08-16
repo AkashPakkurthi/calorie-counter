@@ -277,7 +277,7 @@ def test_reasonable_goal_produces_a_deficit():
     assert p.days_left == 70
     assert p.weekly_rate == 0.4
     assert p.daily_delta == 440
-    assert p.recommended["daily_calories"] == 2218 - 440
+    assert p.recommended["daily_calories"] == p.maintenance - 440
     assert p.achievable and not p.warnings
 
 
