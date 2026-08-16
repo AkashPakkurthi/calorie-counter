@@ -237,11 +237,13 @@ async def parse_text(text: str, meal_type: str) -> list[dict]:
 
 
 async def lookup_cache(
-    db: AsyncSession, normalized_name: str, unit: str
+    db: AsyncSession, user_id: int, normalized_name: str, unit: str
 ) -> FoodCache | None:
     result = await db.execute(
         select(FoodCache).where(
-            FoodCache.normalized_name == normalized_name, FoodCache.unit == unit
+            FoodCache.user_id == user_id,
+            FoodCache.normalized_name == normalized_name,
+            FoodCache.unit == unit,
         )
     )
     return result.scalar_one_or_none()
@@ -249,15 +251,17 @@ async def lookup_cache(
 
 async def upsert_cache(
     db: AsyncSession,
+    user_id: int,
     normalized_name: str,
     display_name: str,
     unit: str,
     per_unit: Nutrition,
     bump: bool = False,
 ) -> FoodCache:
-    row = await lookup_cache(db, normalized_name, unit)
+    row = await lookup_cache(db, user_id, normalized_name, unit)
     if row is None:
         row = FoodCache(
+            user_id=user_id,
             normalized_name=normalized_name,
             display_name=display_name,
             unit=unit,
@@ -314,7 +318,9 @@ async def enrich_missing(items: list[dict]) -> dict[tuple[str, str], Nutrition]:
     return out
 
 
-async def resolve_meal(db: AsyncSession, text: str, meal_type: str) -> list[ResolvedItem]:
+async def resolve_meal(
+    db: AsyncSession, user_id: int, text: str, meal_type: str
+) -> list[ResolvedItem]:
     """Full pipeline. Returns absolute (quantity-multiplied) nutrition.
 
     Nothing is written to meal history here -- only the food cache is warmed.
@@ -327,7 +333,7 @@ async def resolve_meal(db: AsyncSession, text: str, meal_type: str) -> list[Reso
         key = (item["normalized_name"], item["unit"])
         if key in cached:
             continue
-        row = await lookup_cache(db, *key)
+        row = await lookup_cache(db, user_id, *key)
         if row is not None:
             cached[key] = _to_nutrition(row)
         elif key not in {(m["normalized_name"], m["unit"]) for m in missing}:
@@ -337,7 +343,7 @@ async def resolve_meal(db: AsyncSession, text: str, meal_type: str) -> list[Reso
     for item in missing:
         key = (item["normalized_name"], item["unit"])
         per_unit = enriched.get(key, Nutrition())
-        await upsert_cache(db, key[0], item["name"], key[1], per_unit)
+        await upsert_cache(db, user_id, key[0], item["name"], key[1], per_unit)
     await db.commit()
 
     resolved: list[ResolvedItem] = []

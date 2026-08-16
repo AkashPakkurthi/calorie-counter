@@ -94,6 +94,17 @@ async def _add_missing_columns(conn) -> None:
         for column in table.columns:
             if column.name in existing or column.primary_key:
                 continue
+
+            # Rows that predate ownership belong to nobody, and handing them
+            # to whoever registers first would be a data leak. Clear them.
+            if column.name == "user_id":
+                logger.warning(
+                    "%s gained user ownership; clearing %s pre-accounts rows",
+                    table.name,
+                    table.name,
+                )
+                await conn.exec_driver_sql(f"DELETE FROM {table.name}")
+
             col_type = column.type.compile(conn.dialect)
             logger.info("adding missing column %s.%s", table.name, column.name)
             await conn.exec_driver_sql(

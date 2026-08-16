@@ -10,6 +10,17 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./calories.db"
     app_tz: str = "Asia/Kolkata"
 
+    # Signs session cookies. Left blank a random one is generated at boot,
+    # which is fine locally but logs everyone out on every deploy -- set it
+    # in production.
+    secret_key: str = ""
+    # Anyone registering must supply this. Blank disables the gate entirely,
+    # which on a public URL means strangers can spend your API credits.
+    invite_code: str = ""
+    session_days: int = 30
+    # Cookies are HTTPS-only unless this is on (needed for plain-HTTP local dev).
+    insecure_cookies: bool = False
+
     class Config:
         env_file = ".env"
         extra = "ignore"

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import UserSettings, WeightLog
 
+DEFAULT_WEIGHT_KG = 86.0
+
 # Compendium of Physical Activities values. Tune here if they feel off.
 MET = {
     "walking": 3.5,  # moderate pace, ~5 km/h
@@ -33,7 +35,7 @@ def kcal_per_min(activity: str, weight_kg: float) -> float:
     return round(MET[activity] * weight_kg / 60, 2)
 
 
-async def weight_for_date(db: AsyncSession, date: str) -> float:
+async def weight_for_date(db: AsyncSession, user_id: int, date: str) -> float:
     """Most recent weigh-in on or before `date`, else the profile weight.
 
     Falling back to the *profile* (not to a later weigh-in) keeps early days
@@ -41,7 +43,7 @@ async def weight_for_date(db: AsyncSession, date: str) -> float:
     """
     result = await db.execute(
         select(WeightLog)
-        .where(WeightLog.date <= date)
+        .where(WeightLog.user_id == user_id, WeightLog.date <= date)
         .order_by(desc(WeightLog.date))
         .limit(1)
     )
@@ -49,8 +51,11 @@ async def weight_for_date(db: AsyncSession, date: str) -> float:
     if row is not None:
         return float(row.weight_kg)
 
-    settings_row = await db.get(UserSettings, 1)
-    return float(settings_row.weight_kg) if settings_row else 86.0
+    result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )
+    settings_row = result.scalar_one_or_none()
+    return float(settings_row.weight_kg) if settings_row else DEFAULT_WEIGHT_KG
 
 
 # Sedentary on purpose: walking and table tennis are logged and counted as

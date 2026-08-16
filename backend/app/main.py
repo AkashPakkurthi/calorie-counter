@@ -8,9 +8,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import async_session, init_db
-from .routers import activity, days, favourites, foods, meals, settings as settings_router
-from .services import get_settings_row
+from .db import init_db
+from .routers import (
+    activity,
+    auth,
+    days,
+    favourites,
+    foods,
+    meals,
+    settings as settings_router,
+)
 from .utils import today_str
 
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +31,6 @@ DIST_DIR = BASE_DIR / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    async with async_session() as session:
-        await get_settings_row(session)  # seed the single settings row
     logger.info("calorie tracker ready (today=%s, tz=%s)", today_str(), settings.app_tz)
     yield
 
@@ -36,11 +41,12 @@ app = FastAPI(title="Calorie Tracker", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,  # the session cookie must survive the dev proxy
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-for module in (meals, days, settings_router, activity, foods, favourites):
+for module in (auth, meals, days, settings_router, activity, foods, favourites):
     app.include_router(module.router)
 
 

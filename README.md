@@ -5,10 +5,19 @@ A single-user calorie and macro tracker. Type what you ate in plain language —
 nutrition breakdown. Everything it learns is cached, so foods you eat regularly
 are logged instantly and for free.
 
-Built for one profile: 26M, 178 cm, 86 kg. No login, no multi-user support.
+Multi-user: each account has its own profile, goal, food log and learned
+foods. Registration is gated by an invite code you control.
 
 ## What it does
 
+- **Accounts.** Email and password, with the profile the maths needs collected
+  at signup (name, gender, age, height in cm or ft/in, weight). Sessions are a
+  signed httpOnly cookie; passwords are bcrypt-hashed. Set `INVITE_CODE` and
+  only people you give it to can register -- share a link like
+  `https://your-app/?invite=YOURCODE` and the field is pre-filled.
+- **Everything is per user.** Meals, weigh-ins, water, exercise, targets, goal
+  and the learned food cache are all scoped to the signed-in account, so the
+  "Pick known food" dropdown only ever shows your own foods.
 - **Two ways to log food.** *Type it* → GPT parses and estimates → you confirm
   and can correct anything before it saves. *Pick known food* → choose from
   everything the tracker already knows, set a quantity, done — no AI call.

@@ -18,12 +18,32 @@ Base = declarative_base()
 MEAL_TYPES = ("breakfast", "lunch", "dinner", "snacks")
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, default="")
+    password_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+def user_fk():
+    """Every personal table carries this. FoodCache deliberately does not --
+    nutrition per unit is a general fact, shared across accounts."""
+    return Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+
+
 class UserSettings(Base):
-    """Single-row table (id=1) holding profile + daily targets."""
+    """One row per user: profile, daily targets and goal."""
 
     __tablename__ = "user_settings"
 
-    id = Column(Integer, primary_key=True, default=1)
+    id = Column(Integer, primary_key=True)
+    user_id = user_fk()
     daily_calories = Column(Integer, default=2500)
     protein_g = Column(Integer, default=150)
     carbs_g = Column(Integer, default=280)
@@ -48,6 +68,7 @@ class MealEntry(Base):
     __tablename__ = "meal_entries"
 
     id = Column(Integer, primary_key=True)
+    user_id = user_fk()
     date = Column(String, index=True, nullable=False)  # YYYY-MM-DD, local tz
     meal_type = Column(String, index=True, nullable=False)
     raw_text = Column(Text, default="")
@@ -83,12 +104,21 @@ class FoodItem(Base):
 
 
 class FoodCache(Base):
-    """Per-ONE-unit nutrition memory, so repeat foods never hit GPT again."""
+    """Per-ONE-unit nutrition memory, so repeat foods never hit GPT again.
+
+    Scoped to the user: the "Pick known food" list should be the foods YOU
+    actually eat, and your correction to a portion size shouldn't change
+    anyone else's numbers. The cost is that each account learns its own
+    foods from scratch.
+    """
 
     __tablename__ = "food_cache"
-    __table_args__ = (UniqueConstraint("normalized_name", "unit", name="uq_food_unit"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "normalized_name", "unit", name="uq_food_unit"),
+    )
 
     id = Column(Integer, primary_key=True)
+    user_id = user_fk()
     normalized_name = Column(String, index=True, nullable=False)
     display_name = Column(String, nullable=False)
     unit = Column(String, nullable=False)
@@ -108,6 +138,7 @@ class Favourite(Base):
     __tablename__ = "favourites"
 
     id = Column(Integer, primary_key=True)
+    user_id = user_fk()
     label = Column(String, nullable=False)
     meal_type = Column(String, default="snacks")
     items_json = Column(Text, nullable=False)
@@ -119,24 +150,33 @@ class ActivityLog(Base):
     weight in effect on that date."""
 
     __tablename__ = "activity_log"
+    # One row per user per day -- the date alone is NOT unique any more.
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_activity_user_date"),)
 
     id = Column(Integer, primary_key=True)
-    date = Column(String, unique=True, index=True, nullable=False)
+    user_id = user_fk()
+    date = Column(String, index=True, nullable=False)
     walking_min = Column(Float, default=0.0)
     tt_min = Column(Float, default=0.0)
 
 
 class WeightLog(Base):
     __tablename__ = "weight_log"
+    # One row per user per day -- the date alone is NOT unique any more.
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_weight_user_date"),)
 
     id = Column(Integer, primary_key=True)
-    date = Column(String, unique=True, index=True, nullable=False)
+    user_id = user_fk()
+    date = Column(String, index=True, nullable=False)
     weight_kg = Column(Float, nullable=False)
 
 
 class WaterLog(Base):
     __tablename__ = "water_log"
+    # One row per user per day -- the date alone is NOT unique any more.
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_water_user_date"),)
 
     id = Column(Integer, primary_key=True)
-    date = Column(String, unique=True, index=True, nullable=False)
+    user_id = user_fk()
+    date = Column(String, index=True, nullable=False)
     ml = Column(Float, default=0.0)

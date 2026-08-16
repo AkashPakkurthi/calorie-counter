@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import current_user
 from ..db import get_db
-from ..models import Favourite
+from ..models import Favourite, User
 from ..schemas import (
     FavouriteCreate,
     FavouriteOut,
@@ -31,14 +32,25 @@ def _to_out(row: Favourite) -> FavouriteOut:
 
 
 @router.get("", response_model=list[FavouriteOut])
-async def list_favourites(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Favourite).order_by(desc(Favourite.created_at)))
+async def list_favourites(
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+):
+    result = await db.execute(
+        select(Favourite)
+        .where(Favourite.user_id == user.id)
+        .order_by(desc(Favourite.created_at))
+    )
     return [_to_out(row) for row in result.scalars()]
 
 
 @router.post("", response_model=FavouriteOut)
-async def create_favourite(payload: FavouriteCreate, db: AsyncSession = Depends(get_db)):
+async def create_favourite(
+    payload: FavouriteCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     row = Favourite(
+        user_id=user.id,
         label=payload.label,
         meal_type=payload.meal_type,
         items_json=json.dumps([i.model_dump() for i in payload.items]),
@@ -54,15 +66,17 @@ async def log_favourite(
     fav_id: int,
     payload: LogFavouriteRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     """Re-add a saved meal with zero GPT calls."""
     row = await db.get(Favourite, fav_id)
-    if row is None:
+    if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="Favourite not found")
     payload = payload or LogFavouriteRequest()
     fav = _to_out(row)
     meal = await save_meal(
         db,
+        user.id,
         payload.date or today_str(),
         payload.meal_type or row.meal_type,
         f"favourite: {row.label}",
@@ -72,9 +86,13 @@ async def log_favourite(
 
 
 @router.delete("/{fav_id}", status_code=204)
-async def delete_favourite(fav_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_favourite(
+    fav_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     row = await db.get(Favourite, fav_id)
-    if row is None:
+    if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="Favourite not found")
     await db.delete(row)
     await db.commit()

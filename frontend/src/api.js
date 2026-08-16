@@ -1,14 +1,21 @@
 const BASE = import.meta.env.VITE_API_URL || "";
 
+export class AuthError extends Error {}
+
 async function request(path, { method = "GET", body } = {}) {
   const res = await fetch(`${BASE}${path}`, {
     method,
+    // the session lives in an httpOnly cookie, so it must be sent along
+    credentials: "include",
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 204) return null;
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
+  if (res.status === 401) {
+    throw new AuthError(data?.detail || "Not signed in");
+  }
   if (!res.ok) {
     throw new Error(data?.detail || `Request failed (${res.status})`);
   }
@@ -17,6 +24,13 @@ async function request(path, { method = "GET", body } = {}) {
 
 export const api = {
   health: () => request("/api/health"),
+
+  authConfig: () => request("/api/auth/config"),
+  me: () => request("/api/auth/me"),
+  register: (payload) => request("/api/auth/register", { method: "POST", body: payload }),
+  login: (email, password) =>
+    request("/api/auth/login", { method: "POST", body: { email, password } }),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
 
   day: (date = "today") => request(`/api/days/${date}`),
   days: (days = 30) => request(`/api/days?days=${days}`),

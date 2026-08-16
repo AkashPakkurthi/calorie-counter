@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 MealType = Literal["breakfast", "lunch", "dinner", "snacks"]
 Unit = Literal["piece", "g", "ml", "bowl", "cup", "tbsp", "slice", "serving"]
@@ -261,3 +261,31 @@ class FavouriteCreate(BaseModel):
 class LogFavouriteRequest(BaseModel):
     date: str | None = None
     meal_type: MealType | None = None
+
+
+class RegisterRequest(BaseModel):
+    """Profile is collected up front because every calculation in the app --
+    BMR, maintenance, exercise burn -- needs weight, height, age and sex."""
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+    invite_code: str | None = None
+    name: str = Field(default="", max_length=80)
+    sex: Literal["male", "female"] = "male"
+    age: int = Field(ge=13, le=100)
+    height_cm: float = Field(gt=100, lt=250)
+    weight_kg: float = Field(gt=20, lt=400)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str = ""
+    created_at: datetime

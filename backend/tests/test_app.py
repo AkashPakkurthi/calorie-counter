@@ -12,13 +12,17 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./test_calories.db")
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from backend.app.exercise import bmr_tdee, total_burn, weight_for_date  # noqa: E402
-from backend.app.models import Base, UserSettings, WeightLog  # noqa: E402
+from backend.app.models import Base, User, UserSettings, WeightLog  # noqa: E402
 from backend.app.nutrition import per_unit_from_absolute, upsert_cache  # noqa: E402
 from backend.app.schemas import Nutrition, ResolvedItem  # noqa: E402
-from backend.app.services import build_day, save_meal  # noqa: E402
+from backend.app.services import build_day, day_summaries, save_meal  # noqa: E402
 from backend.app.utils import normalize, today_str  # noqa: E402
 
 pytestmark = pytest.mark.asyncio
+
+
+ME = 1       # the signed-in user in these tests
+OTHER = 2    # a second account, used to prove data does not leak
 
 
 @pytest_asyncio.fixture
@@ -28,7 +32,14 @@ async def db():
         await conn.run_sync(Base.metadata.create_all)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
     async with session_maker() as session:
-        session.add(UserSettings(id=1, weight_kg=86.0))
+        session.add_all(
+            [
+                User(id=ME, email="me@example.com", password_hash="x"),
+                User(id=OTHER, email="other@example.com", password_hash="x"),
+                UserSettings(user_id=ME, weight_kg=86.0),
+                UserSettings(user_id=OTHER, weight_kg=60.0),
+            ]
+        )
         await session.commit()
         yield session
     await engine.dispose()
@@ -67,38 +78,38 @@ def test_bmr_tdee():
 
 
 async def test_weight_falls_back_to_profile(db):
-    assert await weight_for_date(db, "2026-01-01") == 86.0
+    assert await weight_for_date(db, ME, "2026-01-01") == 86.0
 
 
 async def test_weight_uses_entry_in_effect_on_that_date(db):
     db.add_all(
         [
-            WeightLog(date="2026-01-04", weight_kg=86.0),
-            WeightLog(date="2026-02-01", weight_kg=82.0),
+            WeightLog(user_id=ME, date="2026-01-04", weight_kg=86.0),
+            WeightLog(user_id=ME, date="2026-02-01", weight_kg=82.0),
         ]
     )
     await db.commit()
 
     # A day between weigh-ins uses the earlier one...
-    assert await weight_for_date(db, "2026-01-20") == 86.0
+    assert await weight_for_date(db, ME, "2026-01-20") == 86.0
     # ...a day after the newer one uses the newer weight...
-    assert await weight_for_date(db, "2026-02-10") == 82.0
+    assert await weight_for_date(db, ME, "2026-02-10") == 82.0
     # ...and a day before any weigh-in falls back to the profile, so a new
     # weigh-in never retroactively rewrites older days.
-    assert await weight_for_date(db, "2025-12-25") == 86.0
+    assert await weight_for_date(db, ME, "2025-12-25") == 86.0
 
 
 async def test_old_day_burn_unchanged_by_new_weigh_in(db):
-    db.add(WeightLog(date="2026-01-04", weight_kg=86.0))
+    db.add(WeightLog(user_id=ME, date="2026-01-04", weight_kg=86.0))
     await db.commit()
-    before = total_burn(60, 0, await weight_for_date(db, "2026-01-10"))
+    before = total_burn(60, 0, await weight_for_date(db, ME, "2026-01-10"))
 
-    db.add(WeightLog(date="2026-06-01", weight_kg=78.0))
+    db.add(WeightLog(user_id=ME, date="2026-06-01", weight_kg=78.0))
     await db.commit()
-    after = total_burn(60, 0, await weight_for_date(db, "2026-01-10"))
+    after = total_burn(60, 0, await weight_for_date(db, ME, "2026-01-10"))
 
     assert before == after
-    assert total_burn(60, 0, await weight_for_date(db, "2026-06-05")) < before
+    assert total_burn(60, 0, await weight_for_date(db, ME, "2026-06-05")) < before
 
 
 # --- cache ---------------------------------------------------------------
@@ -106,7 +117,7 @@ async def test_old_day_burn_unchanged_by_new_weigh_in(db):
 
 async def test_saving_a_meal_teaches_the_cache(db):
     date = today_str()
-    await save_meal(db, date, "lunch", "3 rotis", [item("Roti", qty=3, calories=300, protein_g=9)])
+    await save_meal(db, ME, date, "lunch", "3 rotis", [item("Roti", qty=3, calories=300, protein_g=9)])
 
     from sqlalchemy import select
 
@@ -127,8 +138,8 @@ async def test_per_unit_inversion_roundtrip():
 
 
 async def test_upsert_overwrites_and_bumps(db):
-    await upsert_cache(db, "roti", "Roti", "piece", Nutrition(calories=100), bump=True)
-    row = await upsert_cache(db, "roti", "Roti", "piece", Nutrition(calories=120), bump=True)
+    await upsert_cache(db, ME, "roti", "Roti", "piece", Nutrition(calories=100), bump=True)
+    row = await upsert_cache(db, ME, "roti", "Roti", "piece", Nutrition(calories=120), bump=True)
     await db.commit()
     assert row.calories == 120  # a correction sticks
     assert row.hit_count == 2
@@ -139,15 +150,15 @@ async def test_upsert_overwrites_and_bumps(db):
 
 async def test_day_totals_and_net_calories(db):
     date = today_str()
-    await save_meal(db, date, "breakfast", "", [item("Idli", qty=2, calories=140, protein_g=4)])
-    await save_meal(db, date, "lunch", "", [item("Rice", qty=1, unit="bowl", calories=260, protein_g=5)])
+    await save_meal(db, ME, date, "breakfast", "", [item("Idli", qty=2, calories=140, protein_g=4)])
+    await save_meal(db, ME, date, "lunch", "", [item("Rice", qty=1, unit="bowl", calories=260, protein_g=5)])
 
     from backend.app.models import ActivityLog
 
-    db.add(ActivityLog(date=date, walking_min=60, tt_min=0))
+    db.add(ActivityLog(user_id=ME, date=date, walking_min=60, tt_min=0))
     await db.commit()
 
-    day = await build_day(db, date)
+    day = await build_day(db, ME, date)
     assert day.totals.calories == 400
     assert day.totals.protein_g == 9
     assert day.activity.calories_burned == 301.0
@@ -157,7 +168,7 @@ async def test_day_totals_and_net_calories(db):
 
 
 async def test_empty_day_is_zeroed_not_an_error(db):
-    day = await build_day(db, "2026-03-01")
+    day = await build_day(db, ME, "2026-03-01")
     assert day.totals.calories == 0
     assert day.net_calories == 0
     assert day.meals["dinner"] == []
@@ -348,3 +359,131 @@ def test_plaintext_postgres_still_connects():
     # it when available instead of refusing to connect.
     _, kw = build_engine_args("postgresql://postgres:pw@10.0.0.5:5432/calories")
     assert kw["connect_args"]["ssl"] == "prefer"
+
+
+# --- accounts: passwords, invite gate, and isolation between users --------
+
+import pytest  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
+
+from backend.app import auth as auth_mod  # noqa: E402
+from backend.app.models import ActivityLog as AL  # noqa: E402
+
+
+def test_password_hashing_roundtrip():
+    hashed = auth_mod.hash_password("correct horse battery")
+    assert hashed != "correct horse battery"  # never stored in the clear
+    assert auth_mod.verify_password("correct horse battery", hashed)
+    assert not auth_mod.verify_password("wrong password", hashed)
+
+
+def test_absurdly_long_password_is_rejected_not_truncated():
+    # bcrypt silently ignores anything past 72 bytes, which would make
+    # "password" + 200 chars equivalent to a different long password.
+    with pytest.raises(HTTPException):
+        auth_mod.hash_password("x" * 200)
+
+
+def test_emails_are_matched_case_insensitively():
+    assert auth_mod.normalize_email("  Me@Example.COM ") == "me@example.com"
+
+
+def test_invite_gate(monkeypatch):
+    monkeypatch.setattr(auth_mod.settings, "invite_code", "letmein")
+    auth_mod.check_invite("letmein")  # correct code passes
+    for bad in (None, "", "nope", "LETMEIN"):
+        with pytest.raises(HTTPException):
+            auth_mod.check_invite(bad)
+
+    monkeypatch.setattr(auth_mod.settings, "invite_code", "")
+    auth_mod.check_invite(None)  # blank config disables the gate entirely
+
+
+def test_session_cookie_is_signed_and_tamper_evident():
+    token = auth_mod.serializer.dumps({"uid": 7})
+    assert auth_mod.serializer.loads(token) == {"uid": 7}
+    forged = auth_mod.URLSafeTimedSerializer("attacker-key", salt=auth_mod.SALT).dumps(
+        {"uid": 1}
+    )
+    with pytest.raises(Exception):
+        auth_mod.serializer.loads(forged)
+
+
+async def test_one_users_meals_never_appear_in_anothers_day(db):
+    date = today_str()
+    await save_meal(db, ME, date, "lunch", "", [item("Roti", qty=3, calories=300)])
+    await save_meal(db, OTHER, date, "lunch", "", [item("Pizza", qty=1, calories=900)])
+
+    mine = await build_day(db, ME, date)
+    theirs = await build_day(db, OTHER, date)
+    assert mine.totals.calories == 300
+    assert theirs.totals.calories == 900
+    assert [i.name for m in mine.meals["lunch"] for i in m.items] == ["Roti"]
+
+
+async def test_burn_uses_each_users_own_weight(db):
+    date = today_str()
+    db.add_all(
+        [
+            AL(user_id=ME, date=date, walking_min=60, tt_min=0),
+            AL(user_id=OTHER, date=date, walking_min=60, tt_min=0),
+        ]
+    )
+    await db.commit()
+
+    mine = await build_day(db, ME, date)
+    theirs = await build_day(db, OTHER, date)
+    assert mine.activity.calories_burned == 301.0  # 86 kg
+    assert theirs.activity.calories_burned == 210.0  # 60 kg
+    assert mine.activity.calories_burned != theirs.activity.calories_burned
+
+
+async def test_weight_log_is_per_user(db):
+    db.add_all(
+        [
+            WeightLog(user_id=ME, date="2026-08-01", weight_kg=84.0),
+            WeightLog(user_id=OTHER, date="2026-08-01", weight_kg=58.0),
+        ]
+    )
+    await db.commit()
+    assert await weight_for_date(db, ME, "2026-08-10") == 84.0
+    assert await weight_for_date(db, OTHER, "2026-08-10") == 58.0
+
+
+async def test_history_is_scoped(db):
+    await save_meal(db, OTHER, "2026-08-10", "dinner", "", [item("Pasta", calories=700)])
+    mine = await day_summaries(db, ME, "2026-08-01", "2026-08-31")
+    assert mine == []  # their day must not show up in my history
+
+
+async def test_targets_are_per_user(db):
+    from backend.app.services import get_settings_row
+
+    row = await get_settings_row(db, ME)
+    row.daily_calories = 1800
+    await db.commit()
+
+    assert (await build_day(db, ME, today_str())).targets.daily_calories == 1800
+    assert (await build_day(db, OTHER, today_str())).targets.daily_calories == 2500
+
+
+async def test_food_cache_and_picker_are_per_user(db):
+    from sqlalchemy import select
+
+    from backend.app.models import FoodCache
+
+    date = today_str()
+    await save_meal(db, ME, date, "lunch", "", [item("Roti", qty=3, calories=300)])
+    await save_meal(db, OTHER, date, "lunch", "", [item("Pizza", qty=1, calories=900)])
+
+    mine = (await db.execute(select(FoodCache).where(FoodCache.user_id == ME))).scalars()
+    assert [f.normalized_name for f in mine] == ["roti"]  # not "pizza"
+
+    # the same food learned by two people is stored twice, so a correction by
+    # one of them cannot change the other's numbers
+    await save_meal(db, OTHER, date, "dinner", "", [item("Roti", qty=1, calories=150)])
+    rows = (
+        await db.execute(select(FoodCache).where(FoodCache.normalized_name == "roti"))
+    ).scalars().all()
+    assert len(rows) == 2
+    assert {r.user_id: r.calories for r in rows} == {ME: 100, OTHER: 150}

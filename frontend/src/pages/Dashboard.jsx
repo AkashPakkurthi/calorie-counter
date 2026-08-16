@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useOutletContext } from "react-router-dom";
 
 import { api, MEALS } from "../api.js";
 import { CalorieRing, MacroBar, MicroStat } from "../components/Rings.jsx";
@@ -19,6 +20,8 @@ const MACROS = [
 ];
 
 export default function Dashboard() {
+  const { user } = useOutletContext();
+
   const { data: day, isLoading, error } = useQuery({
     queryKey: ["day", "today"],
     queryFn: () => api.day("today"),
@@ -49,7 +52,9 @@ export default function Dashboard() {
       )}
 
       <div className="flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">{prettyDate}</h1>
+        <h1 className="text-xl font-semibold">
+          {user?.name ? `${user.name} — ${prettyDate}` : prettyDate}
+        </h1>
         <span className="text-sm text-ink-500">{day.date}</span>
       </div>
 

@@ -40,20 +40,25 @@ NUTRIENTS = (
 )
 
 
-async def get_settings_row(db: AsyncSession) -> UserSettings:
-    row = await db.get(UserSettings, 1)
+async def get_settings_row(db: AsyncSession, user_id: int) -> UserSettings:
+    result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )
+    row = result.scalar_one_or_none()
     if row is None:
-        row = UserSettings(id=1)
+        row = UserSettings(user_id=user_id)
         db.add(row)
         await db.commit()
         await db.refresh(row)
     return row
 
 
-async def current_plan(db: AsyncSession, row: UserSettings | None = None) -> PlanOut:
+async def current_plan(
+    db: AsyncSession, user_id: int, row: UserSettings | None = None
+) -> PlanOut:
     """The goal, costed out against the weight you are today."""
-    row = row or await get_settings_row(db)
-    weight = await weight_for_date(db, today_str())
+    row = row or await get_settings_row(db, user_id)
+    weight = await weight_for_date(db, user_id, today_str())
     plan = build_plan(
         current_weight=weight,
         height_cm=row.height_cm,
@@ -73,11 +78,13 @@ async def current_plan(db: AsyncSession, row: UserSettings | None = None) -> Pla
     return PlanOut(**data)
 
 
-async def effective_targets(db: AsyncSession, row: UserSettings) -> Targets:
+async def effective_targets(
+    db: AsyncSession, user_id: int, row: UserSettings
+) -> Targets:
     """Targets as the dashboard should show them: derived from the goal when
     auto_targets is on, otherwise the numbers you typed in."""
     if row.auto_targets and row.target_weight_kg and row.target_date:
-        plan = await current_plan(db, row)
+        plan = await current_plan(db, user_id, row)
         if plan.recommended:
             return plan.recommended
     return Targets.model_validate(row)
@@ -106,6 +113,7 @@ def settings_out(row: UserSettings) -> SettingsOut:
 
 async def save_meal(
     db: AsyncSession,
+    user_id: int,
     date: str,
     meal_type: str,
     raw_text: str,
@@ -114,7 +122,7 @@ async def save_meal(
 ) -> MealEntry:
     """Persist a confirmed meal. Also teaches the food cache, so any
     correction you made on the confirm screen sticks for next time."""
-    meal = MealEntry(date=date, meal_type=meal_type, raw_text=raw_text)
+    meal = MealEntry(user_id=user_id, date=date, meal_type=meal_type, raw_text=raw_text)
     db.add(meal)
     await db.flush()
 
@@ -133,6 +141,7 @@ async def save_meal(
         if teach_cache:
             await upsert_cache(
                 db,
+                user_id,
                 item.normalized_name,
                 item.name,
                 item.unit,
@@ -153,12 +162,16 @@ def sum_items(items) -> DayTotals:
     return DayTotals(**{k: round(v, 1) for k, v in totals.items()})
 
 
-async def get_activity(db: AsyncSession, date: str) -> ActivityOut:
-    result = await db.execute(select(ActivityLog).where(ActivityLog.date == date))
+async def get_activity(db: AsyncSession, user_id: int, date: str) -> ActivityOut:
+    result = await db.execute(
+        select(ActivityLog).where(
+            ActivityLog.user_id == user_id, ActivityLog.date == date
+        )
+    )
     row = result.scalar_one_or_none()
     walking = row.walking_min if row else 0.0
     tt = row.tt_min if row else 0.0
-    weight = await weight_for_date(db, date)
+    weight = await weight_for_date(db, user_id, date)
     return ActivityOut(
         date=date,
         walking_min=walking,
@@ -168,20 +181,29 @@ async def get_activity(db: AsyncSession, date: str) -> ActivityOut:
     )
 
 
-async def get_water(db: AsyncSession, date: str) -> WaterOut:
-    result = await db.execute(select(WaterLog).where(WaterLog.date == date))
+async def get_water(db: AsyncSession, user_id: int, date: str) -> WaterOut:
+    result = await db.execute(
+        select(WaterLog).where(WaterLog.user_id == user_id, WaterLog.date == date)
+    )
     row = result.scalar_one_or_none()
     return WaterOut(date=date, ml=row.ml if row else 0.0)
 
 
-async def latest_weight_entry(db: AsyncSession) -> WeightLog | None:
-    result = await db.execute(select(WeightLog).order_by(WeightLog.date.desc()).limit(1))
+async def latest_weight_entry(db: AsyncSession, user_id: int) -> WeightLog | None:
+    result = await db.execute(
+        select(WeightLog)
+        .where(WeightLog.user_id == user_id)
+        .order_by(WeightLog.date.desc())
+        .limit(1)
+    )
     return result.scalar_one_or_none()
 
 
-async def build_day(db: AsyncSession, date: str) -> DayOut:
+async def build_day(db: AsyncSession, user_id: int, date: str) -> DayOut:
     result = await db.execute(
-        select(MealEntry).where(MealEntry.date == date).order_by(MealEntry.created_at)
+        select(MealEntry)
+        .where(MealEntry.user_id == user_id, MealEntry.date == date)
+        .order_by(MealEntry.created_at)
     )
     meals = list(result.scalars())
 
@@ -192,40 +214,54 @@ async def build_day(db: AsyncSession, date: str) -> DayOut:
         all_items.extend(meal.items)
 
     totals = sum_items(all_items)
-    settings_row = await get_settings_row(db)
-    activity = await get_activity(db, date)
+    settings_row = await get_settings_row(db, user_id)
+    activity = await get_activity(db, user_id, date)
 
-    latest = await latest_weight_entry(db)
+    latest = await latest_weight_entry(db, user_id)
     stale = days_between(latest.date, today_str()) if latest else None
 
     return DayOut(
         date=date,
         totals=totals,
-        targets=await effective_targets(db, settings_row),
+        targets=await effective_targets(db, user_id, settings_row),
         meals=grouped,
         activity=activity,
-        water=await get_water(db, date),
+        water=await get_water(db, user_id, date),
         net_calories=round(totals.calories - activity.calories_burned, 1),
         weight_kg=activity.weight_used_kg,
         weight_stale_days=stale,
     )
 
 
-async def day_summaries(db: AsyncSession, start: str, end: str) -> list[DaySummary]:
+async def day_summaries(
+    db: AsyncSession, user_id: int, start: str, end: str
+) -> list[DaySummary]:
     result = await db.execute(
-        select(MealEntry).where(MealEntry.date >= start, MealEntry.date <= end)
+        select(MealEntry).where(
+            MealEntry.user_id == user_id,
+            MealEntry.date >= start,
+            MealEntry.date <= end,
+        )
     )
     by_date: dict[str, list] = {}
     for meal in result.scalars():
         by_date.setdefault(meal.date, []).extend(meal.items)
 
     activity_rows = await db.execute(
-        select(ActivityLog).where(ActivityLog.date >= start, ActivityLog.date <= end)
+        select(ActivityLog).where(
+            ActivityLog.user_id == user_id,
+            ActivityLog.date >= start,
+            ActivityLog.date <= end,
+        )
     )
     activity = {r.date: r for r in activity_rows.scalars()}
 
     weight_rows = await db.execute(
-        select(WeightLog).where(WeightLog.date >= start, WeightLog.date <= end)
+        select(WeightLog).where(
+            WeightLog.user_id == user_id,
+            WeightLog.date >= start,
+            WeightLog.date <= end,
+        )
     )
     weights = {r.date: r.weight_kg for r in weight_rows.scalars()}
 
@@ -237,7 +273,7 @@ async def day_summaries(db: AsyncSession, start: str, end: str) -> list[DaySumma
         burned = 0.0
         if act:
             burned = total_burn(
-                act.walking_min, act.tt_min, await weight_for_date(db, date)
+                act.walking_min, act.tt_min, await weight_for_date(db, user_id, date)
             )
         out.append(
             DaySummary(

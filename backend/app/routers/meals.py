@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import current_user
 from ..db import get_db
-from ..models import FoodCache, FoodItem, MealEntry
+from ..models import FoodCache, FoodItem, MealEntry, User
 from ..nutrition import NutritionError, resolve_meal
 from ..schemas import (
     AnalyzeRequest,
@@ -20,11 +21,15 @@ router = APIRouter(prefix="/api/meals", tags=["meals"])
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(payload: AnalyzeRequest, db: AsyncSession = Depends(get_db)):
+async def analyze(
+    payload: AnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Free text -> resolved items. Writes nothing to your meal history;
     you confirm (and can edit) before anything is saved."""
     try:
-        items = await resolve_meal(db, payload.text, payload.meal_type)
+        items = await resolve_meal(db, user.id, payload.text, payload.meal_type)
     except NutritionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not items:
@@ -39,9 +44,14 @@ async def analyze(payload: AnalyzeRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=MealOut)
-async def create_meal(payload: SaveMealRequest, db: AsyncSession = Depends(get_db)):
+async def create_meal(
+    payload: SaveMealRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     meal = await save_meal(
         db,
+        user.id,
         payload.date or today_str(),
         payload.meal_type,
         payload.raw_text,
@@ -51,7 +61,11 @@ async def create_meal(payload: SaveMealRequest, db: AsyncSession = Depends(get_d
 
 
 @router.post("/pick", response_model=MealOut)
-async def create_from_picks(payload: PickRequest, db: AsyncSession = Depends(get_db)):
+async def create_from_picks(
+    payload: PickRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     """Log known foods straight from the cache -- no GPT call, no cost."""
     if not payload.picks:
         raise HTTPException(status_code=422, detail="No foods selected.")
@@ -59,7 +73,7 @@ async def create_from_picks(payload: PickRequest, db: AsyncSession = Depends(get
     items: list[ResolvedItem] = []
     for pick in payload.picks:
         food = await db.get(FoodCache, pick.food_id)
-        if food is None:
+        if food is None or food.user_id != user.id:
             raise HTTPException(status_code=404, detail=f"Unknown food id {pick.food_id}")
         per_unit = {k: getattr(food, k) or 0 for k in NUTRIENTS}
         scaled = {k: round(v * pick.quantity, 1) for k, v in per_unit.items()}
@@ -76,17 +90,21 @@ async def create_from_picks(payload: PickRequest, db: AsyncSession = Depends(get
 
     labels = ", ".join(f"{i.quantity:g} {i.unit} {i.name}" for i in items)
     meal = await save_meal(
-        db, payload.date or today_str(), payload.meal_type, labels, items
+        db, user.id, payload.date or today_str(), payload.meal_type, labels, items
     )
     return MealOut.model_validate(meal)
 
 
 @router.patch("/{meal_id}", response_model=MealOut)
 async def update_meal(
-    meal_id: int, payload: MealPatch, db: AsyncSession = Depends(get_db)
+    meal_id: int,
+    payload: MealPatch,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     meal = await db.get(MealEntry, meal_id)
-    if meal is None:
+    # 404 rather than 403 on someone else's row: don't confirm it exists.
+    if meal is None or meal.user_id != user.id:
         raise HTTPException(status_code=404, detail="Meal not found")
 
     for item in list(meal.items):
@@ -111,9 +129,13 @@ async def update_meal(
 
 
 @router.delete("/{meal_id}", status_code=204)
-async def delete_meal(meal_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_meal(
+    meal_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
     meal = await db.get(MealEntry, meal_id)
-    if meal is None:
+    if meal is None or meal.user_id != user.id:
         raise HTTPException(status_code=404, detail="Meal not found")
     await db.delete(meal)
     await db.commit()
