@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
@@ -31,7 +31,10 @@ async def auth_config():
 
 @router.post("/register", response_model=UserOut)
 async def register(
-    payload: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: RegisterRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ):
     check_invite(payload.invite_code)
 
@@ -66,13 +69,16 @@ async def register(
         setattr(row, field, value)
     db.add(WeightLog(user_id=user.id, date=today_str(), weight_kg=payload.weight_kg))
     await db.commit()
-    set_session(response, user.id)
+    set_session(request, response, user.id)
     return UserOut.model_validate(user)
 
 
 @router.post("/login", response_model=UserOut)
 async def login(
-    payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ):
     user = await get_user_by_email(db, payload.email)
     # Same message either way: don't reveal which emails exist.
@@ -81,7 +87,7 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is disabled")
 
-    set_session(response, user.id)
+    set_session(request, response, user.id)
     return UserOut.model_validate(user)
 
 

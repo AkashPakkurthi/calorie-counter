@@ -60,14 +60,21 @@ def check_invite(code: str | None) -> None:
         raise HTTPException(status_code=403, detail="Invalid invite code")
 
 
-def set_session(response: Response, user_id: int) -> None:
+def set_session(request: Request, response: Response, user_id: int) -> None:
+    # A Secure cookie is silently dropped by the browser over plain HTTP, which
+    # looks exactly like "login did nothing". So mark it Secure only when the
+    # request actually arrived over HTTPS -- local dev then works with no
+    # configuration, and a real deployment still gets the protection.
+    over_https = request.url.scheme == "https" or (
+        request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+    )
     response.set_cookie(
         COOKIE_NAME,
         serializer.dumps({"uid": user_id}),
         max_age=settings.session_days * 24 * 3600,
         httponly=True,
         samesite="lax",
-        secure=not settings.insecure_cookies,
+        secure=over_https and not settings.insecure_cookies,
         path="/",
     )
 

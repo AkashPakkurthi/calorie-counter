@@ -487,3 +487,25 @@ async def test_food_cache_and_picker_are_per_user(db):
     ).scalars().all()
     assert len(rows) == 2
     assert {r.user_id: r.calories for r in rows} == {ME: 100, OTHER: 150}
+
+
+def test_session_cookie_is_secure_only_over_https():
+    """A Secure cookie is dropped by the browser on plain HTTP, which looks
+    like a silently broken login -- so the flag follows the actual scheme."""
+    from unittest.mock import Mock
+
+    from fastapi import Response
+
+    def cookie_for(scheme, forwarded=None):
+        request = Mock()
+        request.url.scheme = scheme
+        request.headers = {"x-forwarded-proto": forwarded} if forwarded else {}
+        response = Response()
+        auth_mod.set_session(request, response, user_id=1)
+        return response.headers["set-cookie"]
+
+    assert "Secure" not in cookie_for("http")          # local development
+    assert "Secure" in cookie_for("https")             # real deployment
+    # behind a proxy the app sees http, so trust the forwarded scheme
+    assert "Secure" in cookie_for("http", forwarded="https")
+    assert "HttpOnly" in cookie_for("http")            # never readable from JS
