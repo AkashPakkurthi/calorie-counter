@@ -53,8 +53,14 @@ async def weight_for_date(db: AsyncSession, date: str) -> float:
     return float(settings_row.weight_kg) if settings_row else 86.0
 
 
+# Sedentary on purpose: walking and table tennis are logged and counted as
+# burn, so an "active" multiplier here would count them twice. Shared with
+# plan.py so Settings and the goal card never show different maintenance.
+SEDENTARY_MULTIPLIER = 1.2
+
+
 def bmr_tdee(weight_kg: float, height_cm: float, age: int, sex: str) -> tuple[float, float]:
-    """Mifflin-St Jeor, with a light-activity multiplier (desk job + walking)."""
+    """Mifflin-St Jeor BMR, plus maintenance for a desk job."""
     base = 10 * weight_kg + 6.25 * height_cm - 5 * age
     bmr = base + (5 if sex.lower().startswith("m") else -161)
-    return round(bmr, 0), round(bmr * 1.375, 0)
+    return round(bmr, 0), round(bmr * SEDENTARY_MULTIPLIER, 0)

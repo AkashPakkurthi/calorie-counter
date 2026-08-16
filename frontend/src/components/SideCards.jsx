@@ -142,6 +142,8 @@ export function WeightCard({ currentWeight, staleDays }) {
     },
   });
 
+  const { data: plan } = useQuery({ queryKey: ["plan"], queryFn: api.plan });
+
   const [latest, previous] = weights;
   const delta = latest && previous ? latest.weight_kg - previous.weight_kg : null;
   const nudge = staleDays === null || staleDays === undefined || staleDays > 7;
@@ -168,6 +170,33 @@ export function WeightCard({ currentWeight, staleDays }) {
       <p className="mt-1 text-xs text-ink-500">
         {latest ? `Last weighed ${latest.date}` : "No weigh-in logged yet"}
       </p>
+
+      {plan?.target_weight != null && plan.days_left > 0 && (
+        <div className="mt-2">
+          <div className="mb-1 flex justify-between text-xs text-ink-500">
+            <span>
+              {Math.abs(plan.kg_to_go).toFixed(1)} kg to {plan.target_weight} kg
+            </span>
+            <span className="tnum">{plan.days_left} days left</span>
+          </div>
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-ink-800"
+            role="progressbar"
+            aria-valuenow={plan.progress_pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Progress from ${plan.start_weight} kg to ${plan.target_weight} kg`}
+          >
+            <div
+              className="h-full rounded-full bg-series-1 transition-[width] duration-500"
+              style={{ width: `${plan.progress_pct}%` }}
+            />
+          </div>
+          <p className="mt-1 text-xs text-ink-500">
+            {plan.progress_pct}% there, from {plan.start_weight} kg
+          </p>
+        </div>
+      )}
       {nudge && (
         <p className="mt-2 rounded-lg bg-ink-850 px-3 py-2 text-xs text-warn">
           Time for a weigh-in — it keeps your burn numbers honest.

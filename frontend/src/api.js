@@ -30,6 +30,10 @@ export const api = {
   settings: () => request("/api/settings"),
   saveSettings: (payload) => request("/api/settings", { method: "PUT", body: payload }),
 
+  plan: () => request("/api/settings/plan"),
+  saveGoal: (payload) => request("/api/settings/goal", { method: "PUT", body: payload }),
+  clearGoal: () => request("/api/settings/goal", { method: "DELETE" }),
+
   foodOptions: (q = "") =>
     request(`/api/foods/options${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   foods: () => request("/api/foods"),

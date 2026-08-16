@@ -34,6 +34,14 @@ class UserSettings(Base):
     height_cm = Column(Float, default=178.0)
     age = Column(Integer, default=26)
     sex = Column(String, default="male")
+    # Goal. When both are set, daily targets can be derived from them.
+    target_weight_kg = Column(Float, nullable=True)
+    target_date = Column(String, nullable=True)  # YYYY-MM-DD
+    # Weight when the goal was set -- the only honest baseline for "% done".
+    goal_start_weight_kg = Column(Float, nullable=True)
+    # Recompute targets from the goal as weight and days-left change, instead
+    # of freezing whatever the numbers were on the day you set the goal.
+    auto_targets = Column(Boolean, default=False)
 
 
 class MealEntry(Base):

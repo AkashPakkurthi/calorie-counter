@@ -244,3 +244,77 @@ def test_implausible_macros_are_flagged():
     ).implausible() is None
     # no calories logged -> nothing to cross-check
     assert Nutrition().implausible() is None
+
+
+# --- goal -> daily targets ------------------------------------------------
+
+from backend.app.plan import build_plan  # noqa: E402
+
+
+def plan_for(target, date, weight=86.0, start=None, today="2026-08-16"):
+    return build_plan(
+        current_weight=weight, height_cm=178, age=26, sex="male",
+        target_weight=target, target_date=date, start_weight=start, today=today,
+    )
+
+
+def test_no_goal_means_maintenance():
+    p = plan_for(None, None)
+    assert p.daily_delta == 0
+    assert p.recommended["daily_calories"] == p.maintenance
+    assert p.warnings == []
+
+
+def test_maintenance_excludes_logged_exercise():
+    # BMR 1848 x 1.2 sedentary -- NOT x1.375, which would double-count the
+    # walking and table tennis that are logged as burn.
+    assert plan_for(None, None).maintenance == 2218
+
+
+def test_reasonable_goal_produces_a_deficit():
+    p = plan_for(82.0, "2026-10-25")  # 4 kg in 70 days
+    assert p.kg_to_go == 4.0
+    assert p.days_left == 70
+    assert p.weekly_rate == 0.4
+    assert p.daily_delta == 440
+    assert p.recommended["daily_calories"] == 2218 - 440
+    assert p.achievable and not p.warnings
+
+
+def test_crash_diet_is_capped_at_a_floor_not_obeyed():
+    p = plan_for(76.0, "2026-09-15")  # 10 kg in 30 days
+    assert not p.achievable
+    assert p.recommended["daily_calories"] >= 1500
+    assert any("floor" in w for w in p.warnings)
+    assert any("kg/week" in w for w in p.warnings)
+
+
+def test_bulk_surplus_is_capped():
+    p = plan_for(92.0, "2026-09-15")
+    assert not p.achievable
+    assert p.recommended["daily_calories"] <= p.maintenance + 500
+    assert any("surplus" in w for w in p.warnings)
+
+
+def test_past_date_is_rejected_gracefully():
+    p = plan_for(80.0, "2026-01-01")
+    assert not p.achievable
+    assert p.days_left <= 0
+    assert any("passed" in w for w in p.warnings)
+    assert p.recommended["daily_calories"] == p.maintenance  # falls back safely
+
+
+def test_progress_measured_from_the_weight_when_goal_was_set():
+    p = plan_for(78.0, "2026-12-31", weight=84.0, start=86.0)
+    assert p.start_weight == 86.0
+    assert p.progress_pct == 25.0  # 2 kg of the 8 kg gap
+    # and it never runs past the ends
+    assert plan_for(78.0, "2026-12-31", weight=70.0, start=86.0).progress_pct == 100.0
+    assert plan_for(78.0, "2026-12-31", weight=90.0, start=86.0).progress_pct == 0.0
+
+
+def test_cut_protein_is_high_and_macros_reconstruct_calories():
+    r = plan_for(82.0, "2026-10-25").recommended
+    assert r["protein_g"] == 172  # 2 g/kg to protect muscle
+    derived = 4 * r["protein_g"] + 4 * r["carbs_g"] + 9 * r["fat_g"]
+    assert abs(derived - r["daily_calories"]) < 30

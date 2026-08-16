@@ -13,8 +13,10 @@ from .models import (
     WeightLog,
 )
 from .nutrition import per_unit_from_absolute, upsert_cache
+from .plan import build_plan
 from .schemas import (
     ActivityOut,
+    PlanOut,
     DayOut,
     DaySummary,
     DayTotals,
@@ -48,6 +50,39 @@ async def get_settings_row(db: AsyncSession) -> UserSettings:
     return row
 
 
+async def current_plan(db: AsyncSession, row: UserSettings | None = None) -> PlanOut:
+    """The goal, costed out against the weight you are today."""
+    row = row or await get_settings_row(db)
+    weight = await weight_for_date(db, today_str())
+    plan = build_plan(
+        current_weight=weight,
+        height_cm=row.height_cm,
+        age=row.age,
+        sex=row.sex,
+        target_weight=row.target_weight_kg,
+        target_date=row.target_date,
+        start_weight=row.goal_start_weight_kg,
+    )
+    data = plan.__dict__ | {
+        "recommended": Targets(
+            **plan.recommended, water_target_ml=row.water_target_ml
+        )
+        if plan.recommended
+        else None
+    }
+    return PlanOut(**data)
+
+
+async def effective_targets(db: AsyncSession, row: UserSettings) -> Targets:
+    """Targets as the dashboard should show them: derived from the goal when
+    auto_targets is on, otherwise the numbers you typed in."""
+    if row.auto_targets and row.target_weight_kg and row.target_date:
+        plan = await current_plan(db, row)
+        if plan.recommended:
+            return plan.recommended
+    return Targets.model_validate(row)
+
+
 def settings_out(row: UserSettings) -> SettingsOut:
     bmr, tdee = bmr_tdee(row.weight_kg, row.height_cm, row.age, row.sex)
     return SettingsOut(
@@ -63,6 +98,9 @@ def settings_out(row: UserSettings) -> SettingsOut:
         sex=row.sex,
         bmr=bmr,
         tdee=tdee,
+        target_weight_kg=row.target_weight_kg,
+        target_date=row.target_date,
+        auto_targets=bool(row.auto_targets),
     )
 
 
@@ -163,7 +201,7 @@ async def build_day(db: AsyncSession, date: str) -> DayOut:
     return DayOut(
         date=date,
         totals=totals,
-        targets=Targets.model_validate(settings_row),
+        targets=await effective_targets(db, settings_row),
         meals=grouped,
         activity=activity,
         water=await get_water(db, date),

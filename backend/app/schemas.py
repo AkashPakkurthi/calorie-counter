@@ -103,6 +103,34 @@ class SettingsOut(Targets):
     sex: str
     bmr: float = 0
     tdee: float = 0
+    target_weight_kg: float | None = None
+    target_date: str | None = None
+    auto_targets: bool = False
+
+
+class PlanOut(BaseModel):
+    """What the goal implies: how fast, how many calories, and whether it's sane."""
+
+    current_weight: float
+    start_weight: float | None = None
+    progress_pct: float = 0
+    target_weight: float | None = None
+    target_date: str | None = None
+    days_left: int = 0
+    kg_to_go: float = 0
+    weekly_rate: float = 0
+    maintenance: float = 0
+    daily_delta: float = 0
+    recommended: Targets | None = None
+    warnings: list[str] = []
+    achievable: bool = True
+
+
+class GoalUpdate(BaseModel):
+    target_weight_kg: float | None = Field(default=None, gt=20, lt=400)
+    target_date: str | None = None
+    auto_targets: bool | None = None
+    apply_now: bool = False
 
 
 class SettingsUpdate(BaseModel):
@@ -116,6 +144,9 @@ class SettingsUpdate(BaseModel):
     height_cm: float | None = None
     age: int | None = None
     sex: str | None = None
+    target_weight_kg: float | None = None
+    target_date: str | None = None
+    auto_targets: bool | None = None
 
 
 class ActivityIn(BaseModel):
