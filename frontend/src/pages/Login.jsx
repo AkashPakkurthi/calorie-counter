@@ -106,10 +106,14 @@ export default function Login() {
   });
 
   const registering = mode === "register";
+  const inRange = (value, low, high) => Number(value) >= low && Number(value) <= high;
   const ready =
     email &&
     password &&
-    (!registering || (age && weight && heightCm > 100 && heightCm < 250));
+    (!registering ||
+      (inRange(age, 13, 100) &&
+        inRange(weight, 20, 400) &&
+        inRange(heightCm, 100, 250)));
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
@@ -194,6 +198,8 @@ export default function Login() {
                     type="number"
                     value={age}
                     onChange={(e) => setAge(e.target.value)}
+                    min="13"
+                    max="100"
                     placeholder="26"
                     className="mt-1"
                     required
@@ -219,12 +225,19 @@ export default function Login() {
                   <Input
                     type="number"
                     step="0.1"
+                    min="20"
+                    max="400"
                     value={weight}
                     onChange={(e) => setWeight(e.target.value)}
                     placeholder="86"
                     className="mt-1"
                     required
                   />
+                  {weight && (Number(weight) < 20 || Number(weight) > 400) && (
+                    <span className="mt-1 block text-[11px] text-warn">
+                      That looks off — weight is in kilograms.
+                    </span>
+                  )}
                 </label>
               </div>
 

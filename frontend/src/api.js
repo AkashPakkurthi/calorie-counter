@@ -1,6 +1,45 @@
-const BASE = import.meta.env.VITE_API_URL || "";
+const BASE = import.meta.env?.VITE_API_URL || "";
 
 export class AuthError extends Error {}
+
+const FIELD_LABELS = {
+  email: "Email",
+  password: "Password",
+  name: "Name",
+  age: "Age",
+  sex: "Gender",
+  height_cm: "Height",
+  weight_kg: "Weight",
+  invite_code: "Invite code",
+  target_weight_kg: "Target weight",
+  target_date: "Target date",
+  quantity: "Quantity",
+};
+
+/** FastAPI returns a string for our own errors but a list of objects for
+ *  schema validation failures. Rendering that list directly is where
+ *  "[object Object]" comes from. */
+export function formatDetail(detail) {
+  if (typeof detail === "string") return detail;
+  if (!Array.isArray(detail)) return "Something went wrong";
+
+  return detail
+    .map((err) => {
+      const field = (err.loc || []).filter((p) => p !== "body").join(".");
+      const label = FIELD_LABELS[field] || field;
+      // "Input should be greater than 20" reads better as "must be over 20"
+      const msg = (err.msg || "is invalid")
+        .replace(/^Input should be greater than or equal to/, "must be at least")
+        .replace(/^Input should be less than or equal to/, "must be at most")
+        .replace(/^Input should be greater than/, "must be over")
+        .replace(/^Input should be less than/, "must be under")
+        .replace(/^Input should be a valid/, "must be a valid")
+        .replace(/^String should have at least (\d+) characters$/, "must be at least $1 characters")
+        .replace(/^Input should be/, "must be");
+      return label ? `${label} ${msg}` : msg;
+    })
+    .join(". ");
+}
 
 async function request(path, { method = "GET", body } = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -14,10 +53,12 @@ async function request(path, { method = "GET", body } = {}) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (res.status === 401) {
-    throw new AuthError(data?.detail || "Not signed in");
+    throw new AuthError(formatDetail(data?.detail) || "Not signed in");
   }
   if (!res.ok) {
-    throw new Error(data?.detail || `Request failed (${res.status})`);
+    throw new Error(
+      data?.detail ? formatDetail(data.detail) : `Request failed (${res.status})`
+    );
   }
   return data;
 }
