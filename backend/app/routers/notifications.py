@@ -31,15 +31,24 @@ def check_token(token: str | None) -> None:
         raise HTTPException(status_code=403, detail="Bad cron token")
 
 
-async def _send_for_user(db: AsyncSession, user: User, date: str) -> str:
+async def _send_for_user(
+    db: AsyncSession, user: User, date: str, mode: str = "evening"
+) -> str | None:
     day = await build_day(db, user.id, date)
-    subject, html, text = compose(day, user.name or "")
+
+    # A morning mail exists to prompt logging. If breakfast is already in,
+    # there is nothing to prompt -- staying quiet is the point.
+    if mode == "morning" and sum(len(v) for v in day.meals.values()) > 0:
+        return None
+
+    subject, html, text = compose(day, user.name or "", mode)
     await send(user.email, subject, html, text)
     return user.email
 
 
 @router.post("/daily")
 async def send_daily(
+    mode: str = "evening",
     x_cron_token: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -56,29 +65,47 @@ async def send_daily(
         .where(User.is_active.is_(True), UserSettings.daily_email.is_(True))
     )
 
-    sent, failed = [], []
+    if mode not in ("morning", "evening"):
+        raise HTTPException(status_code=422, detail="mode must be morning or evening")
+
+    sent, skipped, failed = [], 0, []
     for user, _ in result.all():
         try:
-            sent.append(await _send_for_user(db, user, date))
-        except (NotifyError, Exception) as exc:  # noqa: BLE001
+            who = await _send_for_user(db, user, date, mode)
+            if who:
+                sent.append(who)
+            else:
+                skipped += 1
+        except Exception as exc:  # noqa: BLE001 - one failure must not stop the rest
             logger.warning("daily email failed for %s: %s", user.email, exc)
             failed.append({"email": user.email, "error": str(exc)[:200]})
 
-    return {"date": date, "sent": len(sent), "failed": failed}
+    return {
+        "date": date,
+        "mode": mode,
+        "sent": len(sent),
+        "skipped_already_logged": skipped,
+        "failed": failed,
+    }
 
 
 @router.post("/test")
 async def send_test(
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    mode: str = "evening",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    """Send yourself the email you'd get tonight, to check it looks right."""
+    """Send yourself the email you'd get, to check it looks right."""
     if not configured():
         raise HTTPException(
             status_code=503,
             detail="Brevo isn't configured: set BREVO_API_KEY and BREVO_SENDER_EMAIL.",
         )
     try:
-        await _send_for_user(db, user, today_str())
+        subject, html, text = compose(
+            await build_day(db, user.id, today_str()), user.name or "", mode
+        )
+        await send(user.email, subject, html, text)
     except NotifyError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"sent_to": user.email}

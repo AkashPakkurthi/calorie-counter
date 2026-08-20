@@ -2,10 +2,16 @@ name: Daily nudge email
 
 on:
   schedule:
-    # 21:00 Asia/Kolkata = 15:30 UTC. GitHub cron is UTC only and has no DST,
-    # which suits IST since it never shifts.
-    - cron: "30 15 * * *"
-  workflow_dispatch: {}  # lets you trigger a run by hand from the Actions tab
+    # GitHub cron is UTC and has no DST, which suits IST (fixed +5:30).
+    - cron: "30 5 * * *"   # 11:00 IST -- prompt if nothing is logged yet
+    - cron: "30 14 * * *"  # 20:00 IST -- how the day went
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Which email to send
+        type: choice
+        options: [morning, evening]
+        default: evening
 
 jobs:
   send:
@@ -15,6 +21,9 @@ jobs:
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+          # A scheduled run has no inputs, so pick the mode from the cron line
+          # that fired; a manual run uses whatever was chosen.
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 5 * * *' && 'morning' || 'evening') }}
         run: |
           # Say which secret is missing, rather than failing with a curl
           # exit code that means nothing to anyone.
@@ -25,6 +34,7 @@ jobs:
             fi
           done
 
+          echo "sending the $MODE email"
           # A sleeping free-tier container needs a moment to wake, and the
           # database wakes with it -- so allow retries rather than failing.
           # `set +e` keeps a failed curl from aborting the whole loop.
@@ -32,7 +42,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
               --max-time 120 \
-              -X POST "$APP_URL/api/notifications/daily" \
+              -X POST "$APP_URL/api/notifications/daily?mode=$MODE" \
               -H "X-Cron-Token: $CRON_TOKEN")
             echo "attempt $attempt -> HTTP $code"
             cat /tmp/out.json; echo

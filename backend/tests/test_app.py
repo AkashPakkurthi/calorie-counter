@@ -652,3 +652,45 @@ async def test_send_surfaces_a_brevo_rejection(monkeypatch):
         await notify.send("a@b.com", "s", "<p>h</p>", "t")
     assert "401" in str(caught.value)
     assert "not enabled" in str(caught.value)  # Brevo's reason, not just a code
+
+
+async def test_morning_mail_prompts_but_evening_mail_reports(db):
+    """Same empty day, different wording -- the morning one is a prompt."""
+    day = await build_day(db, ME, today_str())
+
+    morning_subject, _, morning_text = notify.compose(day, "Akash", "morning")
+    evening_subject, _, _ = notify.compose(day, "Akash", "evening")
+
+    assert morning_subject == "Log your breakfast"
+    assert "2500 kcal" in morning_text  # tells you the budget for the day ahead
+    assert evening_subject == "Nothing logged today"
+
+
+async def test_morning_mail_is_skipped_once_something_is_logged(db):
+    date = today_str()
+    await save_meal(db, ME, date, "breakfast", "", [item("Idli", calories=200)])
+
+    user = await db.get(User, ME)
+    # returns None -> nothing sent, because there is nothing to prompt
+    assert await notif_router._send_for_user(db, user, date, "morning") is None
+
+
+async def test_unreachable_brevo_is_a_notify_error_not_a_traceback(monkeypatch):
+    """A blocked network (VPN, firewall, DNS) must surface as a clean message."""
+    monkeypatch.setattr(notify.settings, "brevo_api_key", "key")
+    monkeypatch.setattr(notify.settings, "brevo_sender_email", "me@example.com")
+
+    class Blocked:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *a, **kw):
+            raise notify.httpx.ConnectError("SSLV3_ALERT_HANDSHAKE_FAILURE")
+
+    monkeypatch.setattr(notify.httpx, "AsyncClient", lambda **kw: Blocked())
+    with pytest.raises(notify.NotifyError) as caught:
+        await notify.send("a@b.com", "s", "<p>h</p>", "t")
+    assert "Could not reach Brevo" in str(caught.value)

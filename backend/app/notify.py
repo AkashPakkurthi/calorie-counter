@@ -33,11 +33,11 @@ def _bar(consumed: float, target: float, width: int = 20) -> str:
     return "█" * filled + "·" * (width - filled)
 
 
-def compose(day: DayOut, name: str = "") -> tuple[str, str, str]:
+def compose(day: DayOut, name: str = "", mode: str = "evening") -> tuple[str, str, str]:
     """Return (subject, html, text) for one person's day.
 
-    Two shapes: a reminder when nothing has been logged, and a progress note
-    when something has.
+    `mode` only changes the wording: a morning mail is a prompt to start
+    logging, an evening one reports where the day landed.
     """
     greeting = f"Hi {name}," if name else "Hi,"
     totals, targets = day.totals, day.targets
@@ -46,12 +46,22 @@ def compose(day: DayOut, name: str = "") -> tuple[str, str, str]:
     link = settings.app_url.rstrip("/") or ""
 
     if logged == 0:
-        subject = "Nothing logged today"
-        headline = "You haven't logged anything today."
-        body_lines = [
-            "A quick entry now keeps the streak honest -- even a rough "
-            "description is enough, the app works out the rest.",
-        ]
+        if mode == "morning":
+            subject = "Log your breakfast"
+            headline = "Nothing logged yet today."
+            body_lines = [
+                f"Your budget for today is {targets.daily_calories} kcal and "
+                f"{targets.protein_g} g of protein.",
+                "Type what you had -- a rough description is enough, the app "
+                "works out the portions.",
+            ]
+        else:
+            subject = "Nothing logged today"
+            headline = "You haven't logged anything today."
+            body_lines = [
+                "A quick entry now keeps the streak honest -- even a rough "
+                "description is enough, the app works out the rest.",
+            ]
     else:
         over = totals.calories > targets.daily_calories
         subject = (
@@ -113,12 +123,20 @@ async def send(to_email: str, subject: str, html: str, text: str) -> None:
         "htmlContent": html,
         "textContent": text,
     }
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        response = await client.post(
-            BREVO_URL,
-            json=payload,
-            headers={"api-key": settings.brevo_api_key, "accept": "application/json"},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            response = await client.post(
+                BREVO_URL,
+                json=payload,
+                headers={
+                    "api-key": settings.brevo_api_key,
+                    "accept": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        # A blocked or unreachable host (corporate VPN, DNS, TLS) must read as
+        # a mail failure, not leak an httpx traceback out of the endpoint.
+        raise NotifyError(f"Could not reach Brevo: {exc}") from exc
     if response.status_code >= 300:
         # Brevo puts the reason in the body; the status alone is not enough.
         raise NotifyError(f"Brevo rejected the send ({response.status_code}): {response.text[:200]}")
