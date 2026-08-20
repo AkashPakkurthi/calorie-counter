@@ -509,3 +509,50 @@ def test_session_cookie_is_secure_only_over_https():
     # behind a proxy the app sees http, so trust the forwarded scheme
     assert "Secure" in cookie_for("http", forwarded="https")
     assert "HttpOnly" in cookie_for("http")            # never readable from JS
+
+
+async def test_requests_get_503_while_the_database_is_still_waking(monkeypatch):
+    """Neon takes tens of seconds to wake. Requests in that window should be
+    told to retry, not blow up -- and must never hang forever."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from backend.app import db as db_mod
+
+    monkeypatch.setattr(db_mod, "schema_ready", asyncio.Event())  # not set
+    monkeypatch.setattr(db_mod, "WAIT_FOR_SCHEMA_SECONDS", 0.05)
+
+    with pytest.raises(HTTPException) as caught:
+        async for _ in db_mod.get_db():
+            pass
+    assert caught.value.status_code == 503
+    assert "waking up" in caught.value.detail
+
+
+async def test_startup_retries_a_sleeping_database(monkeypatch):
+    """A Neon instance that is still waking refuses the first connections;
+    startup must keep trying rather than leaving the app dead."""
+    import asyncio
+
+    from backend.app import db as db_mod
+
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise OSError("connection refused")
+
+    real_sleep = asyncio.sleep  # keep a handle before patching, or it recurses
+
+    async def no_wait(_seconds):
+        await real_sleep(0)
+
+    monkeypatch.setattr(db_mod, "init_db", flaky)
+    monkeypatch.setattr(db_mod, "schema_ready", asyncio.Event())
+    monkeypatch.setattr(db_mod.asyncio, "sleep", no_wait)
+
+    await db_mod.init_db_background()
+    assert calls["n"] == 3
+    assert db_mod.schema_ready.is_set()  # recovered instead of giving up

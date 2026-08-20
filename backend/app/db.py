@@ -1,7 +1,9 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import get_settings
@@ -66,10 +68,40 @@ engine = create_async_engine(db_url, **_engine_args)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+# Serverless Postgres (Neon) sleeps when idle and takes tens of seconds to
+# wake. Uvicorn only opens its port once startup finishes, so doing this work
+# inline meant the platform saw no listening socket and served a 502. Startup
+# therefore kicks this off in the background and the app serves immediately.
+schema_ready = asyncio.Event()
+
+STARTUP_ATTEMPTS = 6
+WAIT_FOR_SCHEMA_SECONDS = 30
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _add_missing_columns(conn)
+
+
+async def init_db_background() -> None:
+    """Prepare the schema without blocking the port from opening."""
+    delay = 2
+    for attempt in range(1, STARTUP_ATTEMPTS + 1):
+        try:
+            await init_db()
+            schema_ready.set()
+            logger.info("database ready")
+            return
+        except Exception as exc:  # noqa: BLE001 - retried, then surfaced
+            logger.warning(
+                "database not ready (attempt %s/%s): %s", attempt, STARTUP_ATTEMPTS, exc
+            )
+            if attempt == STARTUP_ATTEMPTS:
+                logger.error("giving up on database setup; requests will fail")
+                return
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 20)
 
 
 async def _existing_columns(conn, table_name: str) -> set[str]:
@@ -113,5 +145,18 @@ async def _add_missing_columns(conn) -> None:
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    # A request arriving while the database is still waking waits for it
+    # rather than failing with a confusing 500.
+    if not schema_ready.is_set():
+        try:
+            await asyncio.wait_for(
+                schema_ready.wait(), timeout=WAIT_FOR_SCHEMA_SECONDS
+            )
+        except TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="The database is still waking up. Try again in a moment.",
+            ) from None
+
     async with async_session() as session:
         yield session

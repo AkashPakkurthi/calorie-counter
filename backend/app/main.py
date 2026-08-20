@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import db_url, init_db
+from .db import db_url, init_db_background, schema_ready
 from .routers import (
     activity,
     auth,
@@ -30,7 +31,8 @@ DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    # Deliberately not awaited: see db.init_db_background.
+    task = asyncio.create_task(init_db_background())
     logger.info("calorie tracker ready (today=%s, tz=%s)", today_str(), settings.app_tz)
     if db_url.startswith("sqlite") and not db_url.startswith("sqlite+aiosqlite:////data/"):
         logger.warning(
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
             "account and spend your API credits."
         )
     yield
+    task.cancel()
 
 
 app = FastAPI(title="Calorie Tracker", lifespan=lifespan)
@@ -78,6 +81,7 @@ async def health():
         "provider": settings.openai_base_url or "https://api.openai.com/v1",
         "invite_required": bool(settings.invite_code),
         "database": engine_name,
+        "database_ready": schema_ready.is_set(),
         "data_survives_redeploy": engine_name == "postgresql" or on_mounted_volume,
     }
 
