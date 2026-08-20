@@ -81,9 +81,10 @@ async def health():
     # Never echo the connection string -- it carries credentials. Just say
     # enough to answer "will my data survive the next deploy?".
     engine_name = "postgresql" if db_url.startswith("postgresql") else "sqlite"
-    on_mounted_volume = engine_name == "sqlite" and db_url.startswith(
-        "sqlite+aiosqlite:////data/"
-    )
+    # A file under /data survives only if the host actually mounts a volume
+    # there, and the app cannot tell whether it does. Claiming persistence in
+    # that case is worse than admitting the uncertainty.
+    at_data = db_url.startswith("sqlite+aiosqlite:////data/")
     return {
         "status": "ok",
         "today": today_str(),
@@ -95,7 +96,13 @@ async def health():
         "cron_enabled": bool(settings.cron_token),
         "database": engine_name,
         "database_ready": schema_ready.is_set(),
-        "data_survives_redeploy": engine_name == "postgresql" or on_mounted_volume,
+        "data_survives_redeploy": (
+            True
+            if engine_name == "postgresql"
+            else "only if a volume is mounted at /data"
+            if at_data
+            else False
+        ),
     }
 
 
