@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import db_url, init_db_background, schema_ready
+from .notify import configured as email_configured
 from .routers import (
     activity,
     auth,
@@ -90,6 +91,8 @@ async def health():
         "model": settings.openai_model,
         "provider": settings.openai_base_url or "https://api.openai.com/v1",
         "invite_required": bool(settings.invite_code),
+        "email_configured": email_configured(),
+        "cron_enabled": bool(settings.cron_token),
         "database": engine_name,
         "database_ready": schema_ready.is_set(),
         "data_survives_redeploy": engine_name == "postgresql" or on_mounted_volume,
