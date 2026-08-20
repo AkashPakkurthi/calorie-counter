@@ -26,5 +26,8 @@ COPY --from=ui /ui/dist ./frontend/dist
 # Railway mounts its volume here; the DB lives on it so data survives deploys.
 RUN mkdir -p /data
 
-EXPOSE 8000
-CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# EXPOSE must agree with the port actually bound: some platforms probe the
+# exposed port rather than the one they set in $PORT, and a mismatch shows up
+# as "service unavailable" with no logs at all. 10000 is Render's default.
+EXPOSE 10000
+CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
