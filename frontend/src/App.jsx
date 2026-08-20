@@ -52,7 +52,7 @@ export default function App() {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="text-lg">🔥</span>
-            <span className="font-semibold tracking-tight">Calorie Tracker</span>
+            <span className="font-semibold tracking-tight">Akash Calorie Tracker</span>
           </div>
           <nav className="flex items-center gap-1 text-sm">
             {links.map((l) => (

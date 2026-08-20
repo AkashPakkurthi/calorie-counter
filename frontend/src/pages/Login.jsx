@@ -119,7 +119,7 @@ export default function Login() {
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-6 text-center">
         <div className="text-3xl">🔥</div>
-        <h1 className="mt-2 text-2xl font-semibold">Calorie Tracker</h1>
+        <h1 className="mt-2 text-2xl font-semibold">Akash Calorie Tracker</h1>
         <p className="mt-1 text-sm text-ink-500">
           {registering
             ? "A few details so the calculations fit you."
