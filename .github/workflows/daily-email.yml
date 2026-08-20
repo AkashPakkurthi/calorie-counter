@@ -16,8 +16,19 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
         run: |
+          # Say which secret is missing, rather than failing with a curl
+          # exit code that means nothing to anyone.
+          for name in APP_URL CRON_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set. Add it under Settings -> Secrets and variables -> Actions."
+              exit 1
+            fi
+          done
+
           # A sleeping free-tier container needs a moment to wake, and the
           # database wakes with it -- so allow retries rather than failing.
+          # `set +e` keeps a failed curl from aborting the whole loop.
+          set +e
           for attempt in 1 2 3 4 5; do
             code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
               --max-time 120 \
