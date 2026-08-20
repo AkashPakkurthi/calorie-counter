@@ -17,6 +17,7 @@ from .routers import (
     favourites,
     foods,
     meals,
+    notifications,
     settings as settings_router,
 )
 from .utils import today_str
@@ -61,7 +62,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (auth, meals, days, settings_router, activity, foods, favourites):
+for module in (
+    auth,
+    meals,
+    days,
+    settings_router,
+    activity,
+    foods,
+    favourites,
+    notifications,
+):
     app.include_router(module.router)
 
 

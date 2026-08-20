@@ -556,3 +556,99 @@ async def test_startup_retries_a_sleeping_database(monkeypatch):
     await db_mod.init_db_background()
     assert calls["n"] == 3
     assert db_mod.schema_ready.is_set()  # recovered instead of giving up
+
+
+# --- daily email ----------------------------------------------------------
+
+from backend.app import notify  # noqa: E402
+from backend.app.routers import notifications as notif_router  # noqa: E402
+
+
+async def _day(db, user_id, date=None):
+    return await build_day(db, user_id, date or today_str())
+
+
+async def test_email_nudges_when_nothing_is_logged(db):
+    subject, html, text = notify.compose(await _day(db, ME), "Akash")
+    assert subject == "Nothing logged today"
+    assert "haven't logged anything" in text
+    assert "Hi Akash," in text
+
+
+async def test_email_reports_the_day_and_the_protein_gap(db):
+    date = today_str()
+    await save_meal(
+        db, ME, date, "lunch", "",
+        [item("Roti", qty=3, calories=1000, protein_g=30, carbs_g=180, fat_g=20)],
+    )
+    subject, html, text = notify.compose(await _day(db, ME), "Akash")
+
+    assert "1000 kcal today" in subject
+    assert "1500 left" in subject  # 2500 target - 1000 eaten
+    assert "Protein 30/150" in text
+    # 30 g against a 150 g target is a real shortfall, so it says so
+    assert "short by 120 g" in text
+
+
+async def test_email_says_over_when_the_target_is_exceeded(db):
+    date = today_str()
+    await save_meal(db, ME, date, "dinner", "", [item("Biryani", calories=3000)])
+    subject, _, text = notify.compose(await _day(db, ME), "")
+    assert "over" in subject
+    assert "over budget" in text
+    assert text.startswith("Hi,")  # no name configured
+
+
+def test_progress_bar_never_overflows():
+    assert notify._bar(0, 100) == "·" * 20
+    assert notify._bar(50, 100) == "█" * 10 + "·" * 10
+    assert notify._bar(500, 100) == "█" * 20  # clamped, not 100 blocks
+    assert notify._bar(10, 0) == ""           # no target set
+
+
+def test_cron_endpoint_rejects_a_wrong_or_missing_token(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(notif_router.settings, "cron_token", "s3cret")
+    notif_router.check_token("s3cret")  # correct token passes
+    for bad in (None, "", "wrong", "S3CRET"):
+        with pytest.raises(HTTPException) as caught:
+            notif_router.check_token(bad)
+        assert caught.value.status_code == 403
+
+    # unconfigured means closed, not open
+    monkeypatch.setattr(notif_router.settings, "cron_token", "")
+    with pytest.raises(HTTPException) as caught:
+        notif_router.check_token("anything")
+    assert caught.value.status_code == 503
+
+
+async def test_send_refuses_without_brevo_credentials(monkeypatch):
+    monkeypatch.setattr(notify.settings, "brevo_api_key", "")
+    with pytest.raises(notify.NotifyError):
+        await notify.send("a@b.com", "s", "<p>h</p>", "t")
+
+
+async def test_send_surfaces_a_brevo_rejection(monkeypatch):
+    monkeypatch.setattr(notify.settings, "brevo_api_key", "key")
+    monkeypatch.setattr(notify.settings, "brevo_sender_email", "me@example.com")
+
+    class FakeResponse:
+        status_code = 401
+        text = '{"message":"API Key is not enabled"}'
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *a, **kw):
+            return FakeResponse()
+
+    monkeypatch.setattr(notify.httpx, "AsyncClient", lambda **kw: FakeClient())
+    with pytest.raises(notify.NotifyError) as caught:
+        await notify.send("a@b.com", "s", "<p>h</p>", "t")
+    assert "401" in str(caught.value)
+    assert "not enabled" in str(caught.value)  # Brevo's reason, not just a code

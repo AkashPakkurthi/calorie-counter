@@ -106,6 +106,7 @@ class SettingsOut(Targets):
     target_weight_kg: float | None = None
     target_date: str | None = None
     auto_targets: bool = False
+    daily_email: bool = True
 
 
 class PlanOut(BaseModel):
@@ -147,6 +148,7 @@ class SettingsUpdate(BaseModel):
     target_weight_kg: float | None = None
     target_date: str | None = None
     auto_targets: bool | None = None
+    daily_email: bool | None = None
 
 
 class ActivityIn(BaseModel):

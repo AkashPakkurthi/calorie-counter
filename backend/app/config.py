@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # Cookies are HTTPS-only unless this is on (needed for plain-HTTP local dev).
     insecure_cookies: bool = False
 
+    # --- daily email (Brevo) ---
+    brevo_api_key: str = ""
+    brevo_sender_email: str = ""
+    brevo_sender_name: str = "Calorie Tracker"
+    # Shared secret the scheduled job presents. Without it the endpoint is
+    # closed, so nobody can trigger a mail run by guessing the URL.
+    cron_token: str = ""
+    # Where links in the email point.
+    app_url: str = ""
+
     class Config:
         env_file = ".env"
         extra = "ignore"

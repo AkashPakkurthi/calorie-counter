@@ -217,6 +217,8 @@ export default function Settings() {
     },
   });
 
+  const testEmail = useMutation({ mutationFn: api.sendTestEmail });
+
   if (isLoading || !form) return <Spinner label="Loading settings" />;
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: Number(value) }));
@@ -252,6 +254,36 @@ export default function Settings() {
             </label>
           ))}
         </div>
+      </Card>
+
+      <Card title="Daily email">
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={!!form.daily_email}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, daily_email: e.target.checked }))
+            }
+            className="mt-0.5 h-4 w-4 accent-[var(--color-series-1)]"
+          />
+          <span>
+            Email me an evening summary
+            <span className="block text-xs text-ink-500">
+              Around 9pm: what you have logged, calories left, protein against
+              target, and a weigh-in reminder when it has been over a week. If
+              you have logged nothing, it is a reminder instead.
+            </span>
+          </span>
+        </label>
+        <div className="mt-3">
+          <Button variant="ghost" onClick={() => testEmail.mutate()} disabled={testEmail.isPending}>
+            {testEmail.isPending ? "Sending…" : "Send me one now"}
+          </Button>
+          {testEmail.isSuccess && (
+            <span className="ml-2 text-sm text-good">Sent — check your inbox.</span>
+          )}
+        </div>
+        <ErrorNote>{testEmail.error?.message}</ErrorNote>
       </Card>
 
       <Card title="Profile">

@@ -62,6 +62,8 @@ class UserSettings(Base):
     # Recompute targets from the goal as weight and days-left change, instead
     # of freezing whatever the numbers were on the day you set the goal.
     auto_targets = Column(Boolean, default=False)
+    # Daily nudge email. On by default; switched off from Settings.
+    daily_email = Column(Boolean, default=True)
 
 
 class MealEntry(Base):

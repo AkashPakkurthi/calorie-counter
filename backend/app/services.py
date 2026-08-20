@@ -108,6 +108,7 @@ def settings_out(row: UserSettings) -> SettingsOut:
         target_weight_kg=row.target_weight_kg,
         target_date=row.target_date,
         auto_targets=bool(row.auto_targets),
+        daily_email=bool(row.daily_email),
     )
 
 

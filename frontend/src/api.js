@@ -86,6 +86,7 @@ export const api = {
   saveSettings: (payload) => request("/api/settings", { method: "PUT", body: payload }),
 
   plan: () => request("/api/settings/plan"),
+  sendTestEmail: () => request("/api/notifications/test", { method: "POST" }),
   saveGoal: (payload) => request("/api/settings/goal", { method: "PUT", body: payload }),
   clearGoal: () => request("/api/settings/goal", { method: "DELETE" }),
 

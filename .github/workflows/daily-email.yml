@@ -1,0 +1,32 @@
+name: Daily nudge email
+
+on:
+  schedule:
+    # 21:00 Asia/Kolkata = 15:30 UTC. GitHub cron is UTC only and has no DST,
+    # which suits IST since it never shifts.
+    - cron: "30 15 * * *"
+  workflow_dispatch: {}  # lets you trigger a run by hand from the Actions tab
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the app
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          # A sleeping free-tier container needs a moment to wake, and the
+          # database wakes with it -- so allow retries rather than failing.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
+              --max-time 120 \
+              -X POST "$APP_URL/api/notifications/daily" \
+              -H "X-Cron-Token: $CRON_TOKEN")
+            echo "attempt $attempt -> HTTP $code"
+            cat /tmp/out.json; echo
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 30
+          done
+          echo "daily email run failed"
+          exit 1

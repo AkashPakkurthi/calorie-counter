@@ -104,6 +104,28 @@ that is fast. Your data is unaffected — it lives in Neon, not the container.
 The deployed URL is unlisted but public — anyone with the link can log food and
 spend your OpenAI credits. Don't share it.
 
+## Daily email (optional)
+
+An evening summary of what you have logged: calories against target, the macro
+breakdown, net after exercise, a protein nudge when you are short, and a
+weigh-in reminder when it has been over a week. If nothing is logged, it is a
+reminder instead.
+
+1. [brevo.com](https://www.brevo.com) → sign up → **SMTP & API → API keys** →
+   create a key. The free tier is 300 emails/day.
+2. Set `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` (verified in Brevo), `APP_URL`,
+   and a `CRON_TOKEN` of your choosing.
+3. In GitHub: **Settings → Secrets and variables → Actions** → add `APP_URL`
+   and `CRON_TOKEN` matching the values above.
+
+[.github/workflows/daily-email.yml](.github/workflows/daily-email.yml) then
+calls `POST /api/notifications/daily` at 21:00 IST each day, retrying while a
+free-tier container wakes. Trigger it by hand any time from the Actions tab, or
+use **Send me one now** in Settings.
+
+Each account can switch the email off from Settings. Without `CRON_TOKEN` the
+endpoint is closed, so nobody can trigger a mail run by finding the URL.
+
 ## Layout
 
 ```
