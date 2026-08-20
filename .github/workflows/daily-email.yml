@@ -4,7 +4,8 @@ on:
   schedule:
     # GitHub cron is UTC and has no DST, which suits IST (fixed +5:30).
     - cron: "30 5 * * *"   # 11:00 IST -- prompt if nothing is logged yet
-    - cron: "30 14 * * *"  # 20:00 IST -- how the day went
+    # TEMPORARY for testing -- 23:05 IST. Revert to "30 14 * * *" (20:00 IST).
+    - cron: "35 17 * * *"  # 23:05 IST -- how the day went
   workflow_dispatch:
     inputs:
       mode:

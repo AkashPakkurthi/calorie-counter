@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -113,6 +113,10 @@ if DIST_DIR.exists():
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str):
+        # An unknown /api route must answer with JSON. Serving index.html here
+        # would hand the frontend HTML to parse as JSON.
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="No such endpoint")
         candidate = DIST_DIR / path
         if path and candidate.is_file():
             return FileResponse(candidate)

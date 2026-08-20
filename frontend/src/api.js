@@ -50,8 +50,25 @@ async function request(path, { method = "GET", body } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 204) return null;
+
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // A proxy error page, a "waking up" splash, or a platform 502 arrives as
+    // HTML. Parsing it throws "Unexpected token '<'", which tells the user
+    // nothing, so translate it into what actually happened.
+    const looksLikeHtml = /^\s*<(!doctype|html)/i.test(text);
+    if (looksLikeHtml || !res.ok) {
+      throw new Error(
+        res.status === 502 || res.status === 503
+          ? "The server is starting up. Give it a minute and try again."
+          : `The server returned an unexpected response (HTTP ${res.status}).`
+      );
+    }
+    throw new Error("The server sent a malformed response.");
+  }
   if (res.status === 401) {
     throw new AuthError(formatDetail(data?.detail) || "Not signed in");
   }
