@@ -8,6 +8,7 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +88,25 @@ async def send_daily(
         "skipped_already_logged": skipped,
         "failed": failed,
     }
+
+
+@router.get("/preview", response_class=HTMLResponse)
+async def preview(
+    mode: str = "evening",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """See the email in the browser without sending it -- handy when a network
+    blocks Brevo, or just to check the wording."""
+    if mode not in ("morning", "evening"):
+        raise HTTPException(status_code=422, detail="mode must be morning or evening")
+    day = await build_day(db, user.id, today_str())
+    subject, html, _ = compose(day, user.name or "", mode)
+    return HTMLResponse(
+        f"<div style='background:#0b0b0f;padding:24px;min-height:100vh'>"
+        f"<p style='font-family:sans-serif;color:#9191a6'>Subject: "
+        f"<strong style='color:#ececf2'>{subject}</strong></p>{html}</div>"
+    )
 
 
 @router.post("/test")
